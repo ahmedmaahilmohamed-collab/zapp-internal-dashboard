@@ -9,6 +9,16 @@ Phase 9 target:
 - Backend: Render
 - Database: Supabase PostgreSQL
 
+Production URLs:
+
+```text
+Frontend: https://dashboard.zappmv.com
+Backend API: https://api-dashboard.zappmv.com
+Health check: https://api-dashboard.zappmv.com/health
+Vercel project: zapp-internal-dashboard
+ZAPP live API source: https://receipt-verification-app.onrender.com
+```
+
 Do not deploy automatically from a local machine unless the owner explicitly
 asks for it. Do not commit `.env` files or paste production secrets into docs,
 issues, chat, screenshots, or frontend environment variables.
@@ -37,7 +47,7 @@ JWT_SECRET=<long random secret generated for this dashboard only>
 ZAPP_API_BASE_URL=https://receipt-verification-app.onrender.com
 ZAPP_API_TOKEN=<same internal token expected by the live ZAPP backend>
 FRONTEND_ORIGIN=https://dashboard.zappmv.com
-CORS_ORIGINS=https://dashboard.zappmv.com,https://<vercel-preview-or-production-domain>
+CORS_ORIGINS=https://dashboard.zappmv.com
 ```
 
 Optional backend environment variables:
@@ -87,10 +97,10 @@ Required frontend environment variable:
 VITE_API_BASE_URL=https://api-dashboard.zappmv.com
 ```
 
-Use the temporary Render URL before the backend custom domain is ready:
+Do not keep a temporary Render API URL in Vercel production settings. Use only:
 
 ```text
-VITE_API_BASE_URL=https://<render-service>.onrender.com
+VITE_API_BASE_URL=https://api-dashboard.zappmv.com
 ```
 
 Frontend custom domain:
@@ -109,20 +119,42 @@ dashboard.zappmv.com
 
 Do not put `DATABASE_URL` in Vercel or any frontend environment.
 
+## Deploy Hook
+
+Render deploy hooks are secret URLs. Keep the hook in a password manager,
+terminal session, or CI secret such as `RENDER_DEPLOY_HOOK_URL`; do not commit
+it to this repository.
+
+When the owner explicitly asks for a backend deploy, trigger the hook without
+printing its value:
+
+```powershell
+Invoke-WebRequest -Method POST -Uri $env:RENDER_DEPLOY_HOOK_URL
+```
+
 ## Go-Live Checklist
 
+- [ ] Open `https://api-dashboard.zappmv.com/health`.
+- [ ] Open `https://dashboard.zappmv.com`.
 - [ ] Supabase database is created and reachable from Render.
 - [ ] `DATABASE_URL` is set only in Render backend environment variables.
 - [ ] Alembic migrations pass on Render deploy.
 - [ ] Render `/health` returns database `ok: true`.
 - [ ] First admin account is created by the intended owner.
 - [ ] Live ZAPP diagnostics pass for orders, purchase requests, and email logs.
-- [ ] `CORS_ORIGINS` includes `https://dashboard.zappmv.com`.
+- [ ] `CORS_ORIGINS` is `https://dashboard.zappmv.com`.
 - [ ] `FRONTEND_ORIGIN` is `https://dashboard.zappmv.com`.
-- [ ] Vercel `VITE_API_BASE_URL` points to the Render API or backend custom domain.
+- [ ] Vercel `VITE_API_BASE_URL` is `https://api-dashboard.zappmv.com`.
 - [ ] No secrets are committed to source control.
 - [ ] Production frontend build passes.
 - [ ] Browser refresh works on `/orders`, `/requests`, `/email-logs`, `/diagnostics`, and `/calculator`.
+- [ ] Overview loads.
+- [ ] Orders load.
+- [ ] Requests load.
+- [ ] Email Logs load.
+- [ ] Diagnostics loads.
+- [ ] Calculator loads.
+- [ ] Live ZAPP API status shows connected.
 - [ ] Access Management is admin-only.
 - [ ] Diagnostics and health details are admin-only where applicable.
 

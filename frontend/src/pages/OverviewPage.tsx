@@ -281,8 +281,8 @@ function ZappStatusCard({ stats }: { stats: OverviewStatsResponse }) {
   return (
     <Card>
       <CardHeader className="border-b p-4">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 items-center gap-3">
             <div className="flex h-9 w-9 items-center justify-center rounded-md bg-primary/10 text-primary">
               <ShieldCheck className="h-5 w-5" />
             </div>
@@ -299,7 +299,7 @@ function ZappStatusCard({ stats }: { stats: OverviewStatsResponse }) {
           <p className="mt-1 text-sm text-muted-foreground">{stats.zappApi.message}</p>
           <p className="mt-3 text-xs text-muted-foreground">Checked {formatDate(stats.zappApi.checkedAt)}</p>
         </div>
-        <div className="grid gap-3 sm:grid-cols-3">
+        <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-1 2xl:grid-cols-3">
           <ZappMiniStatus label="Orders" section={stats.zappApi.orders} />
           <ZappMiniStatus label="Requests" section={stats.zappApi.requests} />
           <ZappMiniStatus label="Email Logs" section={stats.zappApi.emailLogs} />
@@ -329,8 +329,8 @@ function ZappMiniStatus<T>({
   section: OverviewZappSection<T>;
 }) {
   return (
-    <div className="rounded-md border p-3">
-      <div className="flex items-center justify-between gap-3">
+    <div className="min-w-0 rounded-md border p-3">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between xl:flex-col xl:items-start 2xl:flex-row 2xl:items-center">
         <p className="text-sm font-medium">{label}</p>
         <Badge variant={statusVariant(section.status)}>{section.status.replace(/_/g, " ")}</Badge>
       </div>
@@ -435,9 +435,9 @@ function RecentOrders({ section }: { section: OverviewZappSection<DashboardOrder
           {section.recent.slice(0, 5).map((order) => (
             <div key={order.id || order.orderName} className="flex items-start justify-between gap-4 p-4">
               <div className="min-w-0">
-                <p className="truncate text-sm font-medium">{safeDisplay(order.orderName || order.orderNumber, "Order")}</p>
+                <p className="truncate font-mono text-xs font-medium">{safeDisplay(order.id, "Order")}</p>
                 <p className="mt-1 truncate text-xs text-muted-foreground">
-                  {safeDisplay(order.customerName || order.customerEmail)}
+                  {safeDisplay(order.orderName || order.orderNumber || order.customerName || order.customerEmail)}
                 </p>
               </div>
               <div className="shrink-0 text-right">
@@ -470,11 +470,11 @@ function RecentRequests({ section }: { section: OverviewZappSection<DashboardReq
           {section.recent.slice(0, 5).map((request) => (
             <div key={request.id || request.requestNumber} className="flex items-start justify-between gap-4 p-4">
               <div className="min-w-0">
-                <p className="truncate text-sm font-medium">
-                  {safeDisplay(request.requestNumber || request.reference, "Request")}
+                <p className="truncate font-mono text-xs font-medium">
+                  {safeDisplay(request.id, "Request")}
                 </p>
                 <p className="mt-1 truncate text-xs text-muted-foreground">
-                  {safeDisplay(request.customerName || request.customerEmail)}
+                  {safeDisplay(request.requestNumber || request.reference || request.customerName || request.customerEmail)}
                 </p>
               </div>
               <div className="shrink-0 text-right">

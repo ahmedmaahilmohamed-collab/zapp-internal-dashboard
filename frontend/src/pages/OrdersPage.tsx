@@ -2,18 +2,25 @@ import { fetchOrders, type DashboardOrder } from "../lib/api";
 import { formatCurrency, formatDate, safeDisplay } from "../lib/utils";
 import { ResourceListPage, StatusBadge } from "./ResourceListPage";
 
+function orderSecondary(order: DashboardOrder) {
+  const secondary = order.orderName || order.orderNumber;
+  return secondary && secondary !== order.id ? secondary : "";
+}
+
 export function OrdersPage() {
   return (
     <ResourceListPage<DashboardOrder>
       columns={[
         {
           key: "order",
-          label: "Order",
+          label: "ID",
           className: "w-[18%]",
           render: (order) => (
             <div>
-              <p className="font-medium">{safeDisplay(order.orderName || order.orderNumber || order.id)}</p>
-              <p className="mt-1 text-muted-foreground">{safeDisplay(order.id)}</p>
+              <p className="break-all font-mono text-[11px] font-medium">{safeDisplay(order.id)}</p>
+              {orderSecondary(order) ? (
+                <p className="mt-1 truncate text-muted-foreground">{orderSecondary(order)}</p>
+              ) : null}
             </div>
           ),
         },
@@ -56,7 +63,7 @@ export function OrdersPage() {
       ]}
       detailFields={[
         { label: "Order ID", render: (order) => safeDisplay(order.id) },
-        { label: "Order name", render: (order) => safeDisplay(order.orderName || order.orderNumber) },
+        { label: "Order name", render: (order) => safeDisplay(orderSecondary(order)) },
         { label: "Order number", render: (order) => safeDisplay(order.orderNumber) },
         { label: "Source type", render: (order) => safeDisplay(order.sourceType) },
         { label: "Customer", render: (order) => safeDisplay(order.customerName) },
@@ -74,13 +81,13 @@ export function OrdersPage() {
         { label: "Linked request", render: (order) => safeDisplay(order.linkedRequestId) },
         { label: "Source ID", render: (order) => safeDisplay(order.source?.sourceId) },
       ]}
-      detailTitle={(order) => safeDisplay(order.orderName || order.orderNumber || order.id, "Order")}
+      detailTitle={(order) => safeDisplay(order.id, "Order")}
       fetcher={fetchOrders}
       mobileMeta={(order) => <StatusBadge value={order.financialStatus || order.status} />}
       mobileSubtitle={(order) =>
         `${safeDisplay(order.customerName, "Customer")} · ${formatCurrency(order.total, order.currency)}`
       }
-      mobileTitle={(order) => safeDisplay(order.orderName || order.orderNumber || order.id, "Order")}
+      mobileTitle={(order) => safeDisplay(order.id, "Order")}
       searchPlaceholder="Search orders, customers, or IDs"
       statusOptions={["approved", "paid", "fulfilled", "pending", "cancelled", "rejected"]}
       subtitle="Live Shopify orders from the existing ZAPP API."

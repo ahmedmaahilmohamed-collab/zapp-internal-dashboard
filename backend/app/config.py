@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     app_name: str = "ZAPP Internal Dashboard API"
     app_env: str = "development"
     api_cors_origins: str = Field(
-        default="http://localhost:5173,http://127.0.0.1:5173",
+        default="",
         validation_alias=AliasChoices("CORS_ORIGINS", "API_CORS_ORIGINS"),
     )
     frontend_origin: str | None = Field(default=None, validation_alias="FRONTEND_ORIGIN")

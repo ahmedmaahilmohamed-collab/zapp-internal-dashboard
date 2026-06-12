@@ -122,6 +122,28 @@ The local `backend/.env` file is ignored and should hold the private
 
 ## Production
 
+Production URLs:
+
+- Frontend: `https://dashboard.zappmv.com`
+- Backend API: `https://api-dashboard.zappmv.com`
+- Health check: `https://api-dashboard.zappmv.com/health`
+- ZAPP live API source: `https://receipt-verification-app.onrender.com`
+- Database: Supabase PostgreSQL via backend-only `DATABASE_URL`
+
+Production frontend environment:
+
+```text
+VITE_API_BASE_URL=https://api-dashboard.zappmv.com
+```
+
+Production backend environment:
+
+```text
+APP_ENV=production
+FRONTEND_ORIGIN=https://dashboard.zappmv.com
+CORS_ORIGINS=https://dashboard.zappmv.com
+```
+
 - Deployment guide: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
 - Backup guide: [docs/BACKUPS.md](docs/BACKUPS.md)
 - Production checklist: [docs/PRODUCTION_CHECKLIST.md](docs/PRODUCTION_CHECKLIST.md)

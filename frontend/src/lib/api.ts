@@ -1,4 +1,8 @@
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
+
+if (!API_BASE_URL) {
+  throw new Error("VITE_API_BASE_URL is not configured.");
+}
 const AUTH_TOKEN_KEY = "zapp_dashboard_access_token";
 const REFRESH_TOKEN_KEY = "zapp_dashboard_refresh_token";
 

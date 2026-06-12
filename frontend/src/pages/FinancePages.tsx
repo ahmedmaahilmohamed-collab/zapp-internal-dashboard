@@ -47,6 +47,18 @@ function ErrorBanner({ error, onRetry }: { error: string; onRetry: () => void })
   );
 }
 
+function InlineFormError({ error }: { error: string }) {
+  if (!error) {
+    return null;
+  }
+
+  return (
+    <div className="rounded-md border border-orange-500/30 bg-orange-500/5 p-3 text-sm text-orange-700 dark:text-orange-300">
+      {error}
+    </div>
+  );
+}
+
 function EmptyState({ label }: { label: string }) {
   return (
     <CardContent className="flex min-h-72 flex-col items-center justify-center gap-3 p-6 text-center">
@@ -150,6 +162,9 @@ export function CurrenciesPage() {
   const [error, setError] = useState("");
   const [editing, setEditing] = useState<CurrencyRecord | null>(null);
   const [form, setForm] = useState(blankCurrency);
+  const [formOpen, setFormOpen] = useState(false);
+  const [formError, setFormError] = useState("");
+  const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -169,7 +184,9 @@ export function CurrenciesPage() {
 
   function openCreate() {
     setEditing(null);
-    setForm(blankCurrency);
+    setForm({ ...blankCurrency });
+    setFormError("");
+    setFormOpen(true);
   }
 
   function openEdit(record: CurrencyRecord) {
@@ -182,10 +199,21 @@ export function CurrenciesPage() {
       is_base: record.is_base,
       is_active: record.is_active,
     });
+    setFormError("");
+    setFormOpen(true);
+  }
+
+  function closeForm() {
+    setEditing(null);
+    setForm(blankCurrency);
+    setFormError("");
+    setFormOpen(false);
   }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
+    setFormError("");
+    setSaving(true);
     const payload: CurrencyPayload = {
       ...form,
       code: form.code.toUpperCase(),
@@ -197,11 +225,14 @@ export function CurrenciesPage() {
       } else {
         await createCurrency(payload);
       }
-      setEditing(null);
-      setForm(blankCurrency);
+      closeForm();
       await load();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Unable to save currency.");
+      const message = caught instanceof Error ? caught.message : "Unable to save currency.";
+      setFormError(message);
+      setError(message);
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -323,9 +354,10 @@ export function CurrenciesPage() {
         )}
       </Card>
 
-      {(editing || form !== blankCurrency) ? (
-        <Modal title={editing ? "Edit Currency" : "New Currency"} onClose={() => { setEditing(null); setForm(blankCurrency); }}>
+      {formOpen ? (
+        <Modal title={editing ? "Edit Currency" : "New Currency"} onClose={closeForm}>
           <form className="grid gap-4 sm:grid-cols-2" onSubmit={submit}>
+            {formError ? <div className="sm:col-span-2"><InlineFormError error={formError} /></div> : null}
             <Field label="Code"><input required className={inputClass} value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} /></Field>
             <Field label="Name"><input required className={inputClass} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
             <Field label="Symbol"><input className={inputClass} value={form.symbol} onChange={(e) => setForm({ ...form, symbol: e.target.value })} /></Field>
@@ -333,8 +365,8 @@ export function CurrenciesPage() {
             <label className="flex items-center gap-2 text-sm"><input checked={form.is_base} type="checkbox" onChange={(e) => setForm({ ...form, is_base: e.target.checked })} /> Base currency</label>
             <label className="flex items-center gap-2 text-sm"><input checked={form.is_active} type="checkbox" onChange={(e) => setForm({ ...form, is_active: e.target.checked })} /> Active</label>
             <div className="flex justify-end gap-2 sm:col-span-2">
-              <Button type="button" variant="outline" onClick={() => { setEditing(null); setForm(blankCurrency); }}>Cancel</Button>
-              <Button type="submit">Save</Button>
+              <Button disabled={saving} type="button" variant="outline" onClick={closeForm}>Cancel</Button>
+              <Button disabled={saving} type="submit">{saving ? "Saving..." : "Save"}</Button>
             </div>
           </form>
         </Modal>
@@ -366,6 +398,9 @@ export function ShippingRatesPage() {
   const [error, setError] = useState("");
   const [editing, setEditing] = useState<ShippingRateRecord | null>(null);
   const [form, setForm] = useState(blankShipping);
+  const [formOpen, setFormOpen] = useState(false);
+  const [formError, setFormError] = useState("");
+  const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -383,7 +418,9 @@ export function ShippingRatesPage() {
 
   function openCreate() {
     setEditing(null);
-    setForm(blankShipping);
+    setForm({ ...blankShipping });
+    setFormError("");
+    setFormOpen(true);
   }
 
   function openEdit(record: ShippingRateRecord) {
@@ -403,10 +440,21 @@ export function ShippingRatesPage() {
       is_active: record.is_active,
       notes: record.notes || "",
     });
+    setFormError("");
+    setFormOpen(true);
+  }
+
+  function closeForm() {
+    setEditing(null);
+    setForm(blankShipping);
+    setFormError("");
+    setFormOpen(false);
   }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
+    setFormError("");
+    setSaving(true);
     const payload: ShippingRatePayload = {
       ...form,
       currency: form.currency.toUpperCase(),
@@ -423,11 +471,14 @@ export function ShippingRatesPage() {
       } else {
         await createShippingRate(payload);
       }
-      setEditing(null);
-      setForm(blankShipping);
+      closeForm();
       await load();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Unable to save shipping rate.");
+      const message = caught instanceof Error ? caught.message : "Unable to save shipping rate.";
+      setFormError(message);
+      setError(message);
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -475,9 +526,10 @@ export function ShippingRatesPage() {
           </>
         )}
       </Card>
-      {(editing || form !== blankShipping) ? (
-        <Modal title={editing ? "Edit Shipping Rate" : "New Shipping Rate"} onClose={() => { setEditing(null); setForm(blankShipping); }}>
+      {formOpen ? (
+        <Modal title={editing ? "Edit Shipping Rate" : "New Shipping Rate"} onClose={closeForm}>
           <form className="grid gap-4 sm:grid-cols-2" onSubmit={submit}>
+            {formError ? <div className="sm:col-span-2"><InlineFormError error={formError} /></div> : null}
             <Field label="Name"><input required className={inputClass} value={form.name} onChange={(e)=>setForm({...form,name:e.target.value})} /></Field>
             <Field label="Carrier"><input required className={inputClass} value={form.carrier} onChange={(e)=>setForm({...form,carrier:e.target.value})} /></Field>
             <Field label="Origin country"><input required className={inputClass} value={form.origin_country} onChange={(e)=>setForm({...form,origin_country:e.target.value})} /></Field>
@@ -491,7 +543,7 @@ export function ShippingRatesPage() {
             <Field label="ETA max"><input min="0" type="number" className={inputClass} value={form.estimated_days_max} onChange={(e)=>setForm({...form,estimated_days_max:e.target.value})} /></Field>
             <label className="flex items-center gap-2 text-sm"><input checked={form.is_active} type="checkbox" onChange={(e)=>setForm({...form,is_active:e.target.checked})} /> Active</label>
             <Field label="Notes"><textarea className={textareaClass} value={form.notes} onChange={(e)=>setForm({...form,notes:e.target.value})} /></Field>
-            <div className="flex justify-end gap-2 sm:col-span-2"><Button type="button" variant="outline" onClick={() => { setEditing(null); setForm(blankShipping); }}>Cancel</Button><Button type="submit">Save</Button></div>
+            <div className="flex justify-end gap-2 sm:col-span-2"><Button disabled={saving} type="button" variant="outline" onClick={closeForm}>Cancel</Button><Button disabled={saving} type="submit">{saving ? "Saving..." : "Save"}</Button></div>
           </form>
         </Modal>
       ) : null}
@@ -533,6 +585,9 @@ export function CostsPage() {
   const [error, setError] = useState("");
   const [editing, setEditing] = useState<CostRecord | null>(null);
   const [form, setForm] = useState(blankCost);
+  const [formOpen, setFormOpen] = useState(false);
+  const [formError, setFormError] = useState("");
+  const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -556,7 +611,9 @@ export function CostsPage() {
 
   function openCreate() {
     setEditing(null);
-    setForm(blankCost);
+    setForm({ ...blankCost });
+    setFormError("");
+    setFormOpen(true);
   }
 
   function openEdit(record: CostRecord) {
@@ -576,10 +633,21 @@ export function CostsPage() {
       currency: record.currency,
       notes: record.notes || "",
     });
+    setFormError("");
+    setFormOpen(true);
+  }
+
+  function closeForm() {
+    setEditing(null);
+    setForm(blankCost);
+    setFormError("");
+    setFormOpen(false);
   }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
+    setFormError("");
+    setSaving(true);
     const payload: CostPayload = {
       linked_order_id: form.linked_order_id || null,
       linked_request_id: form.linked_request_id || null,
@@ -601,11 +669,14 @@ export function CostsPage() {
       } else {
         await createCost(payload);
       }
-      setEditing(null);
-      setForm(blankCost);
+      closeForm();
       await load();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Unable to save cost record.");
+      const message = caught instanceof Error ? caught.message : "Unable to save cost record.";
+      setFormError(message);
+      setError(message);
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -645,16 +716,17 @@ export function CostsPage() {
           </>
         )}
       </Card>
-      {(editing || form !== blankCost) ? (
-        <Modal title={editing ? "Edit Cost Record" : "New Cost Record"} onClose={() => { setEditing(null); setForm(blankCost); }}>
+      {formOpen ? (
+        <Modal title={editing ? "Edit Cost Record" : "New Cost Record"} onClose={closeForm}>
           <form className="grid gap-4 sm:grid-cols-2" onSubmit={submit}>
+            {formError ? <div className="sm:col-span-2"><InlineFormError error={formError} /></div> : null}
             <Field label="Reference label"><input className={inputClass} value={form.reference_label} onChange={(e)=>setForm({...form,reference_label:e.target.value})} /></Field>
             <Field label="Currency"><input required className={inputClass} value={form.currency} onChange={(e)=>setForm({...form,currency:e.target.value})} /></Field>
             <Field label="Linked live order ID"><input className={inputClass} value={form.linked_order_id} onChange={(e)=>setForm({...form,linked_order_id:e.target.value})} /></Field>
             <Field label="Linked live request ID"><input className={inputClass} value={form.linked_request_id} onChange={(e)=>setForm({...form,linked_request_id:e.target.value})} /></Field>
             {costFields.map((field) => <Field key={field} label={field.replace(/_/g, " ")}><input required min="0" step="0.01" type="number" className={inputClass} value={form[field]} onChange={(e)=>setForm({...form,[field]:e.target.value})} /></Field>)}
             <Field label="Notes"><textarea className={textareaClass} value={form.notes} onChange={(e)=>setForm({...form,notes:e.target.value})} /></Field>
-            <div className="flex justify-end gap-2 sm:col-span-2"><Button type="button" variant="outline" onClick={() => { setEditing(null); setForm(blankCost); }}>Cancel</Button><Button type="submit">Save</Button></div>
+            <div className="flex justify-end gap-2 sm:col-span-2"><Button disabled={saving} type="button" variant="outline" onClick={closeForm}>Cancel</Button><Button disabled={saving} type="submit">{saving ? "Saving..." : "Save"}</Button></div>
           </form>
         </Modal>
       ) : null}
