@@ -2,9 +2,12 @@ import { fetchRequests, type DashboardRequest } from "../lib/api";
 import { formatCurrency, formatDate, safeDisplay } from "../lib/utils";
 import { ResourceListPage, StatusBadge } from "./ResourceListPage";
 
-function requestSecondary(request: DashboardRequest) {
-  const secondary = request.requestNumber || request.reference;
-  return secondary && secondary !== request.id ? secondary : "";
+function requestPrimary(request: DashboardRequest) {
+  return request.requestNumber || request.reference || request.id;
+}
+
+function requestId(request: DashboardRequest) {
+  return request.id && request.id !== requestPrimary(request) ? request.id : "";
 }
 
 export function RequestsPage() {
@@ -13,15 +16,13 @@ export function RequestsPage() {
       columns={[
         {
           key: "request",
-          label: "ID",
+          label: "Request",
           className: "w-[18%]",
           render: (request) => (
             <div>
-              <p className="break-all font-mono text-[11px] font-medium">
-                {safeDisplay(request.id)}
-              </p>
-              {requestSecondary(request) ? (
-                <p className="mt-1 truncate text-muted-foreground">{requestSecondary(request)}</p>
+              <p className="font-medium">{safeDisplay(requestPrimary(request))}</p>
+              {requestId(request) ? (
+                <p className="mt-1 break-all font-mono text-[11px] text-muted-foreground">{requestId(request)}</p>
               ) : null}
             </div>
           ),
@@ -69,7 +70,8 @@ export function RequestsPage() {
       ]}
       detailFields={[
         { label: "Request ID", render: (request) => safeDisplay(request.id) },
-        { label: "Reference", render: (request) => safeDisplay(requestSecondary(request)) },
+        { label: "Request number", render: (request) => safeDisplay(request.requestNumber) },
+        { label: "Reference", render: (request) => safeDisplay(request.reference) },
         { label: "Source type", render: (request) => safeDisplay(request.sourceType) },
         { label: "Public token", render: (request) => safeDisplay(request.publicToken) },
         { label: "Customer", render: (request) => safeDisplay(request.customerName) },
@@ -90,7 +92,7 @@ export function RequestsPage() {
         { label: "Latest message", render: (request) => safeDisplay(request.latestMessageStatus) },
         { label: "Email status", render: (request) => safeDisplay(request.emailStatus) },
       ]}
-      detailTitle={(request) => safeDisplay(request.id, "Request")}
+      detailTitle={(request) => safeDisplay(requestPrimary(request), "Request")}
       fetcher={fetchRequests}
       mobileMeta={(request) => <StatusBadge value={request.paymentStatus || request.status} />}
       mobileSubtitle={(request) =>
@@ -99,7 +101,7 @@ export function RequestsPage() {
           request.currency,
         )}`
       }
-      mobileTitle={(request) => safeDisplay(request.id, "Request")}
+      mobileTitle={(request) => safeDisplay(requestPrimary(request), "Request")}
       searchPlaceholder="Search requests, customers, or references"
       statusOptions={["approved", "quoted", "submitted", "reviewing", "awaiting_customer", "fulfilled", "declined", "rejected"]}
       subtitle="Live purchase requests from the existing ZAPP API."

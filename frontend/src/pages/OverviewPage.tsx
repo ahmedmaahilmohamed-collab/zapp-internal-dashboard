@@ -435,9 +435,9 @@ function RecentOrders({ section }: { section: OverviewZappSection<DashboardOrder
           {section.recent.slice(0, 5).map((order) => (
             <div key={order.id || order.orderName} className="flex items-start justify-between gap-4 p-4">
               <div className="min-w-0">
-                <p className="truncate font-mono text-xs font-medium">{safeDisplay(order.id, "Order")}</p>
+                <p className="truncate text-sm font-medium">{safeDisplay(order.orderName || order.orderNumber || order.id, "Order")}</p>
                 <p className="mt-1 truncate text-xs text-muted-foreground">
-                  {safeDisplay(order.orderName || order.orderNumber || order.customerName || order.customerEmail)}
+                  {safeDisplay(order.id || order.customerName || order.customerEmail)}
                 </p>
               </div>
               <div className="shrink-0 text-right">
@@ -470,11 +470,11 @@ function RecentRequests({ section }: { section: OverviewZappSection<DashboardReq
           {section.recent.slice(0, 5).map((request) => (
             <div key={request.id || request.requestNumber} className="flex items-start justify-between gap-4 p-4">
               <div className="min-w-0">
-                <p className="truncate font-mono text-xs font-medium">
-                  {safeDisplay(request.id, "Request")}
+                <p className="truncate text-sm font-medium">
+                  {safeDisplay(request.requestNumber || request.reference || request.id, "Request")}
                 </p>
                 <p className="mt-1 truncate text-xs text-muted-foreground">
-                  {safeDisplay(request.requestNumber || request.reference || request.customerName || request.customerEmail)}
+                  {safeDisplay(request.id || request.customerName || request.customerEmail)}
                 </p>
               </div>
               <div className="shrink-0 text-right">
