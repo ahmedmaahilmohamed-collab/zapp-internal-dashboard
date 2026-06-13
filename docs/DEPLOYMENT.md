@@ -119,6 +119,10 @@ dashboard.zappmv.com
 
 Do not put `DATABASE_URL` in Vercel or any frontend environment.
 
+The `20260613_0004` migration adds practical internal cost record columns and
+backfills them from the preserved legacy finance columns. It does not drop the
+old columns in this release.
+
 ## Deploy Hook
 
 Render deploy hooks are secret URLs. Keep the hook in a password manager,

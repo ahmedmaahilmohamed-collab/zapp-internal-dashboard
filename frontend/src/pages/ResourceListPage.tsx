@@ -1,11 +1,12 @@
 import { ReactNode, useCallback, useEffect, useMemo, useState } from "react";
-import { AlertCircle, Calendar, CheckCircle2, Database, RefreshCcw, Search, Wifi, X } from "lucide-react";
+import { AlertCircle, Calendar, CheckCircle2, Database, Download, RefreshCcw, Search, Wifi, X } from "lucide-react";
 
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { ApiClientError, DashboardCollectionResponse } from "../lib/api";
-import { cn, formatDate, safeDisplay } from "../lib/utils";
+import { useToast } from "../lib/toast-context";
+import { cn, downloadCsv, formatDate, safeDisplay } from "../lib/utils";
 
 interface Column<T> {
   key: string;
@@ -57,6 +58,7 @@ export function ResourceListPage<T extends { id: string; source?: { availableFie
   detailTitle,
   detailFields,
 }: ResourceListPageProps<T>) {
+  const { notify } = useToast();
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState(defaultStatus);
@@ -83,11 +85,13 @@ export function ResourceListPage<T extends { id: string; source?: { availableFie
       });
       setData(nextData);
     } catch (caught) {
-      setError(caught instanceof Error ? caught : new Error("Unable to load records."));
+      const nextError = caught instanceof Error ? caught : new Error("Unable to load records.");
+      setError(nextError);
+      notify(nextError.message, "error");
     } finally {
       setLoading(false);
     }
-  }, [dateFrom, dateTo, fetcher, page, search, status]);
+  }, [dateFrom, dateTo, fetcher, notify, page, search, status]);
 
   useEffect(() => {
     void load();
@@ -126,6 +130,12 @@ export function ResourceListPage<T extends { id: string; source?: { availableFie
     setPage(1);
   }
 
+  function exportCurrentPage() {
+    const rows = toCsvRows(data?.items ?? []);
+    const exported = downloadCsv(`${title.toLowerCase().replace(/\s+/g, "-")}.csv`, rows);
+    notify(exported ? "CSV export downloaded." : "No records to export.", exported ? "success" : "info");
+  }
+
   return (
     <div className="mx-auto max-w-7xl space-y-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
@@ -142,6 +152,10 @@ export function ResourceListPage<T extends { id: string; source?: { availableFie
             )}
             {liveConnected ? "Live API connected" : "Awaiting live data"}
           </Badge>
+          <Button disabled={!data?.items.length} variant="outline" onClick={exportCurrentPage}>
+            <Download className="h-4 w-4" />
+            Export
+          </Button>
           <Button disabled={loading} onClick={load}>
             <RefreshCcw className={cn("h-4 w-4", loading && "animate-spin")} />
             Refresh
@@ -402,6 +416,17 @@ export function ResourceListPage<T extends { id: string; source?: { availableFie
         </div>
       ) : null}
     </div>
+  );
+}
+
+function toCsvRows(items: unknown[]) {
+  return items.map((item) =>
+    Object.fromEntries(
+      Object.entries((item ?? {}) as Record<string, unknown>).map(([key, value]) => [
+        key,
+        typeof value === "object" && value !== null ? JSON.stringify(value) : value,
+      ]),
+    ),
   );
 }
 

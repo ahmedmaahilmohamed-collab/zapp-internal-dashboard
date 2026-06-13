@@ -11,6 +11,15 @@ class DuplicateRecordError(Exception):
     pass
 
 
+COST_COMPONENT_FIELDS = (
+    "product_purchase_cost",
+    "bml_tax",
+    "import_tax",
+    "shipping_cost",
+    "additional_cost",
+)
+
+
 def list_currencies(db: Session, search: str | None = None, include_inactive: bool = True):
     statement = select(models.Currency).order_by(models.Currency.is_base.desc(), models.Currency.code.asc())
     if search:
@@ -88,6 +97,18 @@ def list_shipping_rates(
 
 
 def create_shipping_rate(db: Session, payload: schemas.ShippingRateCreate):
+    if _find_active_currency(db, payload.currency) is None:
+        raise ValueError("Shipping rate currency was not found or is inactive.")
+    if payload.is_active and _find_overlapping_shipping_rate(
+        db,
+        origin_country=payload.origin_country,
+        destination_country=payload.destination_country,
+        carrier=payload.carrier,
+        service_level=payload.service_level,
+        min_weight=payload.min_weight,
+        max_weight=payload.max_weight,
+    ):
+        raise ValueError("An active shipping tier already overlaps this route, carrier, service, and weight range.")
     rate = models.ShippingRateCard(**payload.model_dump())
     db.add(rate)
     return _commit_refresh(db, rate)
@@ -102,6 +123,21 @@ def update_shipping_rate(db: Session, rate_id: int, payload: schemas.ShippingRat
     next_max = updates.get("max_weight", rate.max_weight)
     if next_min >= next_max:
         raise ValueError("min_weight must be lower than max_weight")
+    next_currency = updates.get("currency", rate.currency)
+    if next_currency and _find_active_currency(db, next_currency) is None:
+        raise ValueError("Shipping rate currency was not found or is inactive.")
+    next_is_active = updates.get("is_active", rate.is_active)
+    if next_is_active and _find_overlapping_shipping_rate(
+        db,
+        origin_country=updates.get("origin_country", rate.origin_country),
+        destination_country=updates.get("destination_country", rate.destination_country),
+        carrier=updates.get("carrier", rate.carrier),
+        service_level=updates.get("service_level", rate.service_level),
+        min_weight=next_min,
+        max_weight=next_max,
+        exclude_id=rate_id,
+    ):
+        raise ValueError("An active shipping tier already overlaps this route, carrier, service, and weight range.")
     for key, value in updates.items():
         setattr(rate, key, value)
     return _commit_refresh(db, rate)
@@ -121,7 +157,11 @@ def list_costs(db: Session, search: str | None = None, currency: str | None = No
         pattern = f"%{search.strip()}%"
         statement = statement.where(
             or_(
+                models.InternalCostRecord.source_id.ilike(pattern),
                 models.InternalCostRecord.reference_label.ilike(pattern),
+                models.InternalCostRecord.customer_name.ilike(pattern),
+                models.InternalCostRecord.title.ilike(pattern),
+                models.InternalCostRecord.supplier_name.ilike(pattern),
                 models.InternalCostRecord.linked_order_id.ilike(pattern),
                 models.InternalCostRecord.linked_request_id.ilike(pattern),
                 models.InternalCostRecord.notes.ilike(pattern),
@@ -134,6 +174,10 @@ def list_costs(db: Session, search: str | None = None, currency: str | None = No
 
 def create_cost(db: Session, payload: schemas.CostCreate):
     data = payload.model_dump()
+    if _find_active_currency(db, data["currency"]) is None:
+        raise ValueError("Cost currency was not found or is inactive.")
+    _populate_cost_source_links(data)
+    _sync_legacy_cost_fields(data)
     data.update(_calculate_cost_math(data))
     cost = models.InternalCostRecord(**data)
     db.add(cost)
@@ -145,19 +189,16 @@ def update_cost(db: Session, cost_id: int, payload: schemas.CostUpdate):
     if cost is None:
         return None
     updates = payload.model_dump(exclude_unset=True)
+    if updates.get("currency") and _find_active_currency(db, updates["currency"]) is None:
+        raise ValueError("Cost currency was not found or is inactive.")
+    _populate_cost_source_links(updates)
+    _sync_legacy_cost_fields(updates)
     for key, value in updates.items():
         setattr(cost, key, value)
-    data = {
-        "item_cost": cost.item_cost,
-        "international_shipping_cost": cost.international_shipping_cost,
-        "local_delivery_cost": cost.local_delivery_cost,
-        "customs_cost": cost.customs_cost,
-        "payment_fee": cost.payment_fee,
-        "packaging_cost": cost.packaging_cost,
-        "other_cost": cost.other_cost,
-        "sale_total": cost.sale_total,
-    }
+    data = {field: getattr(cost, field) for field in COST_COMPONENT_FIELDS}
+    data["sale_total"] = cost.sale_total
     math = _calculate_cost_math(data)
+    cost.total_cost = math["total_cost"]
     cost.profit = math["profit"]
     cost.margin_percent = math["margin_percent"]
     return _commit_refresh(db, cost)
@@ -267,20 +308,49 @@ def calculate_pricing(db: Session, payload: schemas.PricingCalculateRequest):
 def _calculate_cost_math(data: dict):
     total_cost = sum(
         Decimal(data.get(field) or 0)
-        for field in (
-            "item_cost",
-            "international_shipping_cost",
-            "local_delivery_cost",
-            "customs_cost",
-            "payment_fee",
-            "packaging_cost",
-            "other_cost",
-        )
+        for field in COST_COMPONENT_FIELDS
     )
     sale_total = Decimal(data.get("sale_total") or 0)
     profit = sale_total - total_cost
     margin = None if sale_total <= 0 else (profit / sale_total * Decimal("100")).quantize(Decimal("0.01"))
-    return {"profit": profit.quantize(Decimal("0.01")), "margin_percent": margin}
+    return {
+        "total_cost": total_cost.quantize(Decimal("0.01")),
+        "profit": profit.quantize(Decimal("0.01")),
+        "margin_percent": margin,
+    }
+
+
+def _populate_cost_source_links(data: dict):
+    source_type = data.get("source_type")
+    source_id = data.get("source_id")
+    if source_type == "order" and source_id:
+        data["linked_order_id"] = source_id
+        data["linked_request_id"] = None
+    elif source_type == "request" and source_id:
+        data["linked_request_id"] = source_id
+        data["linked_order_id"] = None
+    elif source_type == "manual":
+        if data.get("linked_order_id"):
+            data["source_id"] = data["linked_order_id"]
+            data["source_type"] = "order"
+        elif data.get("linked_request_id"):
+            data["source_id"] = data["linked_request_id"]
+            data["source_type"] = "request"
+
+
+def _sync_legacy_cost_fields(data: dict):
+    if "product_purchase_cost" in data:
+        data["item_cost"] = data["product_purchase_cost"]
+    if "bml_tax" in data:
+        data["payment_fee"] = data["bml_tax"]
+    if "import_tax" in data:
+        data["customs_cost"] = data["import_tax"]
+    if "shipping_cost" in data:
+        data["international_shipping_cost"] = data["shipping_cost"]
+        data["local_delivery_cost"] = Decimal("0")
+    if "additional_cost" in data:
+        data["other_cost"] = data["additional_cost"]
+        data["packaging_cost"] = Decimal("0")
 
 
 def _find_active_currency(db: Session, code: str):
@@ -290,6 +360,31 @@ def _find_active_currency(db: Session, code: str):
             models.Currency.is_active.is_(True),
         )
     )
+
+
+def _find_overlapping_shipping_rate(
+    db: Session,
+    *,
+    origin_country: str,
+    destination_country: str,
+    carrier: str,
+    service_level: str | None,
+    min_weight: Decimal,
+    max_weight: Decimal,
+    exclude_id: int | None = None,
+):
+    statement = select(models.ShippingRateCard).where(
+        func.lower(models.ShippingRateCard.origin_country) == origin_country.strip().lower(),
+        func.lower(models.ShippingRateCard.destination_country) == destination_country.strip().lower(),
+        func.lower(models.ShippingRateCard.carrier) == carrier.strip().lower(),
+        func.lower(models.ShippingRateCard.service_level) == (service_level or "").strip().lower(),
+        models.ShippingRateCard.is_active.is_(True),
+        models.ShippingRateCard.min_weight < max_weight,
+        models.ShippingRateCard.max_weight > min_weight,
+    )
+    if exclude_id is not None:
+        statement = statement.where(models.ShippingRateCard.id != exclude_id)
+    return db.scalar(statement)
 
 
 def _find_shipping_rate(

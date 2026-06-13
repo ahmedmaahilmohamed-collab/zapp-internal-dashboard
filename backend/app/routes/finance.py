@@ -84,7 +84,10 @@ def post_shipping_rate(
     _user=Depends(require_roles("admin", "manager")),
     db: Session = Depends(get_db),
 ):
-    return crud.create_shipping_rate(db, payload)
+    try:
+        return crud.create_shipping_rate(db, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.put("/shipping-rates/{rate_id}", response_model=schemas.ShippingRateRead)
@@ -131,7 +134,10 @@ def post_cost(
     _user=Depends(require_roles("admin", "manager")),
     db: Session = Depends(get_db),
 ):
-    return crud.create_cost(db, payload)
+    try:
+        return crud.create_cost(db, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.put("/costs/{cost_id}", response_model=schemas.CostRead)
@@ -141,7 +147,10 @@ def put_cost(
     _user=Depends(require_roles("admin", "manager")),
     db: Session = Depends(get_db),
 ):
-    cost = crud.update_cost(db, cost_id, payload)
+    try:
+        cost = crud.update_cost(db, cost_id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     if cost is None:
         raise HTTPException(status_code=404, detail="Cost record not found.")
     return cost

@@ -74,5 +74,8 @@
 - [ ] Currencies CRUD works.
 - [ ] Shipping rate CRUD works.
 - [ ] Cost record CRUD works.
+- [ ] Cost records use product purchase, BML/payment tax, import tax, shipping, additional cost, sale total, currency, and optional ZAPP links.
+- [ ] Shipping rates default to active base currency and reject overlapping active tiers for the same route/carrier/service.
 - [ ] Pricing calculator works.
 - [ ] Calculator result can be saved as a cost record.
+- [ ] CSV exports download for Orders, Requests, Email Logs, Costs, Currencies, and Shipping Rates.

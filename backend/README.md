@@ -35,6 +35,11 @@ uvicorn app.main:app --reload --port 8000
 
 The ZAPP bearer token is only read server-side and is never returned in API responses.
 
+Internal cost records store practical finance fields while preserving legacy
+columns during the `20260613_0004` migration. Shipping rate writes validate
+active currency codes and reject overlapping active tiers for the same route,
+carrier, service, and weight band.
+
 ## Database
 
 ```powershell

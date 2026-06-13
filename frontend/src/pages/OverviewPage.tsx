@@ -141,7 +141,7 @@ export function OverviewPage() {
             </Badge>
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
-            Local finance, configuration, and ZAPP API availability.
+            Local finance, configuration, and ZAPP API availability. Last updated {formatDate(stats.generatedAt)}.
           </p>
         </div>
         <Button disabled={loading} variant="outline" onClick={load}>
@@ -179,6 +179,12 @@ export function OverviewPage() {
           value={numberLabel(stats.finance.totalCostRecords)}
         />
         <StatCard
+          icon={ShieldCheck}
+          label="Linked Records"
+          meta={`${stats.finance.linkedOrdersCount} orders · ${stats.finance.linkedRequestsCount} requests`}
+          value={numberLabel(stats.finance.linkedOrdersCount + stats.finance.linkedRequestsCount)}
+        />
+        <StatCard
           icon={Coins}
           label="Active Currencies"
           value={numberLabel(stats.configuration.activeCurrenciesCount)}
@@ -208,6 +214,13 @@ export function OverviewPage() {
           meta={stats.zappApi.emailLogs.available ? "Live API connected" : stats.zappApi.emailLogs.status}
           tone={stats.zappApi.emailLogs.available ? "success" : "warning"}
           value={numberLabel(stats.zappApi.emailLogs.total)}
+        />
+        <StatCard
+          icon={AlertCircle}
+          label="Cancelled / Refunded"
+          meta={stats.zappApi.orders.countsMayBePartial || stats.zappApi.requests.countsMayBePartial ? "Counts may be partial" : "Live status count"}
+          tone={stats.zappApi.orders.cancelledCount + stats.zappApi.requests.cancelledCount ? "warning" : undefined}
+          value={numberLabel(stats.zappApi.orders.cancelledCount + stats.zappApi.requests.cancelledCount)}
         />
         {stats.permissions.canManageAccess ? (
           <StatCard
@@ -297,9 +310,12 @@ function ZappStatusCard({ stats }: { stats: OverviewStatsResponse }) {
             {stats.zappApi.configured ? "Configured" : "Not configured"}
           </p>
           <p className="mt-1 text-sm text-muted-foreground">{stats.zappApi.message}</p>
+          <p className="mt-2 text-xs text-muted-foreground">
+            Finance totals come from this dashboard database. Live order, request, and email-log counts come from the ZAPP API when configured.
+          </p>
           <p className="mt-3 text-xs text-muted-foreground">Checked {formatDate(stats.zappApi.checkedAt)}</p>
         </div>
-        <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-1 2xl:grid-cols-3">
+        <div className="grid gap-3 md:grid-cols-3">
           <ZappMiniStatus label="Orders" section={stats.zappApi.orders} />
           <ZappMiniStatus label="Requests" section={stats.zappApi.requests} />
           <ZappMiniStatus label="Email Logs" section={stats.zappApi.emailLogs} />
@@ -330,14 +346,19 @@ function ZappMiniStatus<T>({
 }) {
   return (
     <div className="min-w-0 rounded-md border p-3">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between xl:flex-col xl:items-start 2xl:flex-row 2xl:items-center">
-        <p className="text-sm font-medium">{label}</p>
-        <Badge variant={statusVariant(section.status)}>{section.status.replace(/_/g, " ")}</Badge>
+      <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+        <p className="min-w-0 text-sm font-medium">{label}</p>
+        <Badge className="shrink-0" variant={statusVariant(section.status)}>{section.status.replace(/_/g, " ")}</Badge>
       </div>
       <p className="mt-2 text-2xl font-bold">{numberLabel(section.total)}</p>
       <p className="mt-1 text-xs text-muted-foreground">
         HTTP {safeDisplay(section.upstreamStatus)} · {safeDisplay(section.elapsedMs)} ms
       </p>
+      {section.cancelledCount ? (
+        <p className="mt-1 text-xs text-orange-600 dark:text-orange-400">
+          {section.cancelledCount} cancelled/refunded
+        </p>
+      ) : null}
     </div>
   );
 }

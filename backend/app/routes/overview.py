@@ -50,19 +50,9 @@ async def get_overview_stats(
 
 
 def _finance_stats(db: Session) -> dict[str, Any]:
-    total_cost_expression = (
-        InternalCostRecord.item_cost
-        + InternalCostRecord.international_shipping_cost
-        + InternalCostRecord.local_delivery_cost
-        + InternalCostRecord.customs_cost
-        + InternalCostRecord.payment_fee
-        + InternalCostRecord.packaging_cost
-        + InternalCostRecord.other_cost
-    )
-
     total_records = db.scalar(select(func.count(InternalCostRecord.id))) or 0
     total_sale_value = db.scalar(select(func.coalesce(func.sum(InternalCostRecord.sale_total), 0))) or Decimal("0")
-    total_cost_value = db.scalar(select(func.coalesce(func.sum(total_cost_expression), 0))) or Decimal("0")
+    total_cost_value = db.scalar(select(func.coalesce(func.sum(InternalCostRecord.total_cost), 0))) or Decimal("0")
     total_profit = db.scalar(select(func.coalesce(func.sum(InternalCostRecord.profit), 0))) or Decimal("0")
     average_margin_percent = db.scalar(select(func.avg(InternalCostRecord.margin_percent)))
     profitable_records_count = (
@@ -70,6 +60,12 @@ def _finance_stats(db: Session) -> dict[str, Any]:
     )
     loss_records_count = (
         db.scalar(select(func.count(InternalCostRecord.id)).where(InternalCostRecord.profit < 0)) or 0
+    )
+    linked_orders_count = (
+        db.scalar(select(func.count(InternalCostRecord.id)).where(InternalCostRecord.linked_order_id.is_not(None))) or 0
+    )
+    linked_requests_count = (
+        db.scalar(select(func.count(InternalCostRecord.id)).where(InternalCostRecord.linked_request_id.is_not(None))) or 0
     )
     currencies = [
         value
@@ -86,6 +82,9 @@ def _finance_stats(db: Session) -> dict[str, Any]:
         "averageMarginPercent": _optional_number(average_margin_percent),
         "profitableRecordsCount": int(profitable_records_count),
         "lossRecordsCount": int(loss_records_count),
+        "linkedOrdersCount": int(linked_orders_count),
+        "linkedRequestsCount": int(linked_requests_count),
+        "scope": "local_finance",
     }
 
 
@@ -127,15 +126,7 @@ def _recent_cost_records(db: Session) -> list[dict[str, Any]]:
             "linkedOrderId": record.linked_order_id,
             "linkedRequestId": record.linked_request_id,
             "saleTotal": _money(record.sale_total),
-            "totalCost": _money(
-                record.item_cost
-                + record.international_shipping_cost
-                + record.local_delivery_cost
-                + record.customs_cost
-                + record.payment_fee
-                + record.packaging_cost
-                + record.other_cost
-            ),
+            "totalCost": _money(record.total_cost),
             "profit": _money(record.profit),
             "marginPercent": _optional_number(record.margin_percent),
             "currency": record.currency,
@@ -204,10 +195,11 @@ async def _fetch_zapp_section(
     include_recent: bool = True,
 ) -> dict[str, Any]:
     try:
+        fetch_limit = 100 if include_recent else 1
         items, meta = await client.fetch_collection(
             path=path,
             collection_keys=collection_keys,
-            params={"limit": 6 if include_recent else 1, "skip": 0},
+            params={"limit": fetch_limit, "skip": 0},
         )
     except ZappApiError as exc:
         return {
@@ -222,12 +214,17 @@ async def _fetch_zapp_section(
         if isinstance(item, dict)
     ]
 
+    recent = normalized[:6] if include_recent else []
+    status_counts = _status_counts(normalized)
     return {
         "available": True,
         "status": "success",
         "total": int(meta.get("total") or len(normalized)),
-        "recentCount": len(normalized) if include_recent else 0,
-        "recent": normalized if include_recent else [],
+        "recentCount": len(recent) if include_recent else 0,
+        "recent": recent,
+        "statusCounts": status_counts,
+        "cancelledCount": status_counts.get("cancelled", 0) + status_counts.get("refunded", 0),
+        "countsMayBePartial": int(meta.get("total") or len(normalized)) > len(normalized),
         "upstreamStatus": meta.get("upstreamStatus"),
         "elapsedMs": meta.get("elapsedMs"),
         "responseKeys": meta.get("responseKeys", []),
@@ -242,6 +239,9 @@ def _unavailable_zapp_section(status: str) -> dict[str, Any]:
         "total": None,
         "recentCount": 0,
         "recent": [],
+        "statusCounts": {},
+        "cancelledCount": 0,
+        "countsMayBePartial": False,
         "upstreamStatus": None,
         "elapsedMs": None,
         "responseKeys": [],
@@ -256,6 +256,21 @@ def _summary_currency(currencies: list[str]) -> str:
     if len(unique) > 1:
         return "MIXED"
     return "MVR"
+
+
+def _status_counts(items: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for item in items:
+        status = str(
+            item.get("status")
+            or item.get("paymentStatus")
+            or item.get("financialStatus")
+            or "unknown"
+        ).strip().lower()
+        if not status:
+            status = "unknown"
+        counts[status] = counts.get(status, 0) + 1
+    return counts
 
 
 def _money(value: Decimal | int | float | None) -> float:

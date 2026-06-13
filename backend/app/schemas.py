@@ -116,10 +116,23 @@ class ShippingRateRead(ShippingRateBase):
     updated_at: datetime
 
 
+SourceType = Annotated[str, Field(pattern="^(order|request|manual)$")]
+
+
 class CostBase(BaseModel):
+    source_type: SourceType = "manual"
+    source_id: str | None = None
     linked_order_id: str | None = None
     linked_request_id: str | None = None
     reference_label: str | None = None
+    customer_name: str | None = None
+    title: str | None = None
+    supplier_name: str | None = None
+    product_purchase_cost: NonNegativeMoney = Decimal("0")
+    bml_tax: NonNegativeMoney = Decimal("0")
+    import_tax: NonNegativeMoney = Decimal("0")
+    shipping_cost: NonNegativeMoney = Decimal("0")
+    additional_cost: NonNegativeMoney = Decimal("0")
     item_cost: NonNegativeMoney = Decimal("0")
     international_shipping_cost: NonNegativeMoney = Decimal("0")
     local_delivery_cost: NonNegativeMoney = Decimal("0")
@@ -136,15 +149,41 @@ class CostBase(BaseModel):
     def uppercase_currency(cls, value: str) -> str:
         return value.strip().upper()
 
+    @field_validator("source_id", "linked_order_id", "linked_request_id", "reference_label", "customer_name", "title", "supplier_name", "notes")
+    @classmethod
+    def blank_to_none(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        normalized = value.strip()
+        return normalized or None
+
+    @model_validator(mode="after")
+    def populate_source_links(self):
+        if self.source_type == "order":
+            self.linked_order_id = self.source_id or self.linked_order_id
+        elif self.source_type == "request":
+            self.linked_request_id = self.source_id or self.linked_request_id
+        return self
+
 
 class CostCreate(CostBase):
     pass
 
 
 class CostUpdate(BaseModel):
+    source_type: SourceType | None = None
+    source_id: str | None = None
     linked_order_id: str | None = None
     linked_request_id: str | None = None
     reference_label: str | None = None
+    customer_name: str | None = None
+    title: str | None = None
+    supplier_name: str | None = None
+    product_purchase_cost: NonNegativeMoney | None = None
+    bml_tax: NonNegativeMoney | None = None
+    import_tax: NonNegativeMoney | None = None
+    shipping_cost: NonNegativeMoney | None = None
+    additional_cost: NonNegativeMoney | None = None
     item_cost: NonNegativeMoney | None = None
     international_shipping_cost: NonNegativeMoney | None = None
     local_delivery_cost: NonNegativeMoney | None = None
@@ -161,11 +200,20 @@ class CostUpdate(BaseModel):
     def uppercase_currency(cls, value: str | None) -> str | None:
         return value.strip().upper() if value is not None else value
 
+    @field_validator("source_id", "linked_order_id", "linked_request_id", "reference_label", "customer_name", "title", "supplier_name", "notes")
+    @classmethod
+    def blank_to_none(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        normalized = value.strip()
+        return normalized or None
+
 
 class CostRead(CostBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    total_cost: Decimal
     profit: Decimal
     margin_percent: Decimal | None
     created_at: datetime

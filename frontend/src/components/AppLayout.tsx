@@ -95,17 +95,11 @@ export function AppLayout() {
         )}
       >
         <div className="flex h-14 items-center justify-between border-b border-sidebar-border px-4">
-          <div className="flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-md bg-primary text-sm font-bold text-primary-foreground">
-              Z
-            </div>
-            <div>
-              <p className="text-sm font-semibold leading-none">ZAPP</p>
-              <p className="mt-1 text-[10px] uppercase tracking-wider text-muted-foreground">
-                Atoms AI
-              </p>
-            </div>
-          </div>
+          <img
+            alt="ZAPP"
+            className="h-10 w-10 rounded-md object-cover shadow-sm"
+            src="/zapp-logo.png"
+          />
           <Button
             aria-label="Close navigation"
             className="lg:hidden"

@@ -222,9 +222,19 @@ export type ShippingRatePayload = Omit<ShippingRateRecord, "id" | "created_at" |
 
 export interface CostRecord {
   id: number;
+  source_type: "order" | "request" | "manual";
+  source_id: string | null;
   linked_order_id: string | null;
   linked_request_id: string | null;
   reference_label: string | null;
+  customer_name: string | null;
+  title: string | null;
+  supplier_name: string | null;
+  product_purchase_cost: number;
+  bml_tax: number;
+  import_tax: number;
+  shipping_cost: number;
+  additional_cost: number;
   item_cost: number;
   international_shipping_cost: number;
   local_delivery_cost: number;
@@ -234,6 +244,7 @@ export interface CostRecord {
   other_cost: number;
   sale_total: number;
   currency: string;
+  total_cost: number;
   profit: number;
   margin_percent: number | null;
   notes: string | null;
@@ -241,7 +252,31 @@ export interface CostRecord {
   updated_at: string;
 }
 
-export type CostPayload = Omit<CostRecord, "id" | "profit" | "margin_percent" | "created_at" | "updated_at">;
+export type CostPayload = {
+  source_type?: "order" | "request" | "manual";
+  source_id?: string | null;
+  linked_order_id?: string | null;
+  linked_request_id?: string | null;
+  reference_label?: string | null;
+  customer_name?: string | null;
+  title?: string | null;
+  supplier_name?: string | null;
+  product_purchase_cost?: number;
+  bml_tax?: number;
+  import_tax?: number;
+  shipping_cost?: number;
+  additional_cost?: number;
+  item_cost?: number;
+  international_shipping_cost?: number;
+  local_delivery_cost?: number;
+  customs_cost?: number;
+  payment_fee?: number;
+  packaging_cost?: number;
+  other_cost?: number;
+  sale_total?: number;
+  currency?: string;
+  notes?: string | null;
+};
 
 export interface PricingCalculatePayload {
   item_cost: number;
@@ -300,6 +335,9 @@ export interface OverviewFinanceStats {
   averageMarginPercent: number | null;
   profitableRecordsCount: number;
   lossRecordsCount: number;
+  linkedOrdersCount: number;
+  linkedRequestsCount: number;
+  scope: string;
 }
 
 export interface OverviewConfigurationStats {
@@ -334,6 +372,9 @@ export interface OverviewZappSection<T> {
   upstreamStatus: number | null;
   elapsedMs: number | null;
   responseKeys: string[];
+  statusCounts: Record<string, number>;
+  cancelledCount: number;
+  countsMayBePartial: boolean;
   message: string | null;
 }
 

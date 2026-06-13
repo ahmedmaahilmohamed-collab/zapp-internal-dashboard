@@ -186,8 +186,8 @@ def normalize_order(item: dict[str, Any]) -> dict[str, Any]:
         ),
         "customerName": _safe_str(_first_value(item, "customerName", "customer_name") or _customer_name(customer)),
         "customerEmail": _safe_str(_first_value(item, "customerEmail", "customer_email", "email") or customer.get("email")),
-        "status": _safe_str(_first_value(item, "status", "approvalStatus", "approval_status", "displayFulfillmentStatus")),
-        "financialStatus": _safe_str(_first_value(item, "financialStatus", "financial_status", "paymentStatus", "payment_status")),
+        "status": _priority_status(item, "status", "approvalStatus", "approval_status", "displayFulfillmentStatus", "cancelledAt", "cancelled_at", "canceledAt", "canceled_at"),
+        "financialStatus": _priority_status(item, "financialStatus", "financial_status", "paymentStatus", "payment_status", "refundStatus", "refund_status"),
         "fulfillmentStatus": _safe_str(_first_value(item, "fulfillmentStatus", "fulfillment_status", "displayFulfillmentStatus")),
         "total": _safe_number(total),
         "currency": _safe_str(_first_value(item, "currency", "currencyCode", "currency_code", "presentmentCurrencyCode")) or "USD",
@@ -232,9 +232,9 @@ def normalize_request(item: dict[str, Any]) -> dict[str, Any]:
         "reference": _safe_str(_first_value(item, "reference", "requestReference", "request_reference", "publicToken", "public_token")),
         "customerName": _safe_str(_first_value(item, "customerName", "customer_name") or _customer_name(customer)),
         "customerEmail": _safe_str(_first_value(item, "customerEmail", "customer_email", "email") or customer.get("email")),
-        "status": _safe_str(_first_value(item, "status", "approvalStatus", "approval_status")),
+        "status": _priority_status(item, "status", "approvalStatus", "approval_status", "cancelledAt", "cancelled_at", "canceledAt", "canceled_at"),
         "quoteStatus": _safe_str(_first_value(item, "quoteStatus", "quote_status", "shopifyDraftOrderStatus", "shopify_draft_order_status")),
-        "paymentStatus": _safe_str(_first_value(item, "paymentStatus", "payment_status", "receiptStatus", "receipt_status") or quote.get("status")),
+        "paymentStatus": _priority_status(item, "paymentStatus", "payment_status", "receiptStatus", "receipt_status", "refundStatus", "refund_status") or _safe_str(quote.get("status")),
         "quotedTotal": _safe_number(quoted_total),
         "currency": _safe_str(_first_value(item, "currency", "currencyCode", "currency_code") or quote.get("currency")) or "MVR",
         "itemCount": _item_count(items, item) or _safe_int(details.get("quantity")),
@@ -379,6 +379,20 @@ def _first_dict(source: dict[str, Any], *keys: str) -> dict[str, Any]:
         if isinstance(value, dict):
             return value
     return {}
+
+
+def _priority_status(source: dict[str, Any], *keys: str) -> str:
+    values = [
+        str(source.get(key) or "").strip()
+        for key in keys
+        if source.get(key) is not None and source.get(key) != ""
+    ]
+    joined = " ".join(values).lower()
+    if "refund" in joined:
+        return "refunded"
+    if "cancel" in joined:
+        return "cancelled"
+    return _safe_str(values[0] if values else None)
 
 
 def _customer_name(customer: dict[str, Any]) -> str:

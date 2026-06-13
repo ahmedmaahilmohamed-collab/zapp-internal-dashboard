@@ -14,6 +14,7 @@ import {
   fetchCurrencies,
 } from "../lib/api";
 import { useAuth } from "../lib/auth-context";
+import { useToast } from "../lib/toast-context";
 import { cn, formatCurrency, safeDisplay } from "../lib/utils";
 
 const inputClass =
@@ -69,6 +70,7 @@ function toNumber(value: unknown) {
 
 export function CalculatorPage() {
   const { canManageFinance } = useAuth();
+  const { notify } = useToast();
   const [currencies, setCurrencies] = useState<CurrencyRecord[]>([]);
   const [form, setForm] = useState(blankForm);
   const [result, setResult] = useState<PricingCalculateResult | null>(null);
@@ -81,9 +83,11 @@ export function CalculatorPage() {
     try {
       setCurrencies(await fetchCurrencies({ includeInactive: false }));
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Unable to load currencies.");
+      const message = caught instanceof Error ? caught.message : "Unable to load currencies.";
+      setError(message);
+      notify(message, "error");
     }
-  }, []);
+  }, [notify]);
 
   useEffect(() => {
     void loadCurrencies();
@@ -124,9 +128,12 @@ export function CalculatorPage() {
 
     try {
       setResult(await calculatePricing(buildPayload()));
+      notify("Pricing calculated.", "success");
     } catch (caught) {
       setResult(null);
-      setError(caught instanceof Error ? caught.message : "Unable to calculate pricing.");
+      const message = caught instanceof Error ? caught.message : "Unable to calculate pricing.";
+      setError(message);
+      notify(message, "error");
     } finally {
       setLoading(false);
     }
@@ -141,19 +148,23 @@ export function CalculatorPage() {
     setError("");
     setSaveMessage("");
 
+    const sourceType = form.linked_order_id ? "order" : form.linked_request_id ? "request" : "manual";
+    const sourceId = form.linked_order_id || form.linked_request_id || null;
     const payload: CostPayload = {
+      source_type: sourceType,
+      source_id: sourceId,
       linked_order_id: form.linked_order_id || null,
       linked_request_id: form.linked_request_id || null,
       reference_label:
         form.reference_label ||
         `Calculator estimate: ${form.origin_country} to ${form.destination_country}`,
-      item_cost: toNumber(result.converted_item_cost),
-      international_shipping_cost: toNumber(result.international_shipping_cost),
-      local_delivery_cost: toNumber(result.local_delivery_cost),
-      customs_cost: toNumber(result.customs_cost),
-      payment_fee: toNumber(result.payment_fee),
-      packaging_cost: toNumber(result.packaging_cost),
-      other_cost: toNumber(result.other_cost),
+      title: "Pricing calculator estimate",
+      product_purchase_cost: toNumber(result.converted_item_cost),
+      bml_tax: toNumber(result.payment_fee),
+      import_tax: toNumber(result.customs_cost),
+      shipping_cost:
+        toNumber(result.international_shipping_cost) + toNumber(result.local_delivery_cost),
+      additional_cost: toNumber(result.packaging_cost) + toNumber(result.other_cost),
       sale_total: toNumber(result.recommended_sale_price),
       currency: result.target_currency,
       notes: form.notes || null,
@@ -162,8 +173,11 @@ export function CalculatorPage() {
     try {
       const saved = await createCost(payload);
       setSaveMessage(`Saved cost record #${saved.id}.`);
+      notify("Cost record saved.", "success");
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Unable to save cost record.");
+      const message = caught instanceof Error ? caught.message : "Unable to save cost record.";
+      setError(message);
+      notify(message, "error");
     } finally {
       setSaving(false);
     }

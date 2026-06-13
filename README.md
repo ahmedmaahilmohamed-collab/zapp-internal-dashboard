@@ -1,7 +1,6 @@
 # ZAPP Internal Dashboard
 
-Standalone full-stack foundation for the ZAPP internal operations dashboard,
-also referred to as Atoms AI.
+Standalone full-stack foundation for the ZAPP internal operations dashboard.
 
 This project is separate from the ZAPP Shopify app. The dashboard reads ZAPP
 data through backend-only API calls and keeps its own dashboard data in
@@ -76,7 +75,15 @@ VITE_API_BASE_URL=http://127.0.0.1:8000
 - Diagnostics page with live backend call.
 - Functional Orders, Requests, and Email Logs pages with filters, pagination, responsive
   layouts, loading/empty/error states, and detail modals.
-- Functional Costs, Currencies, and Shipping Rates pages with CRUD forms.
+- Functional Costs, Currencies, and Shipping Rates pages with CRUD forms,
+  active currency dropdowns, CSV exports, and toast notifications.
+- Internal cost records use the practical finance fields:
+  product purchase cost, BML/payment tax, import tax, shipping cost,
+  additional cost, sale total, currency, optional linked ZAPP order/request
+  IDs, snapshots, and notes.
+- Shipping rates are base-currency-first. Existing rate currency values are
+  preserved for compatibility, active overlapping weight tiers are rejected,
+  and the calculator converts shipping costs through configured exchange rates.
 - Functional Pricing Calculator using database currencies and shipping rates,
   with optional save to internal cost records.
 - Login, request access, pending approval, role-based route gates, and admin

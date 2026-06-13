@@ -1,5 +1,5 @@
 import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useState } from "react";
-import { AlertCircle, Database, Pencil, Plus, RefreshCcw, Search, Trash2, X } from "lucide-react";
+import { AlertCircle, Database, Download, Pencil, Plus, RefreshCcw, Search, Trash2, X } from "lucide-react";
 
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -9,6 +9,8 @@ import {
   CostRecord,
   CurrencyPayload,
   CurrencyRecord,
+  DashboardOrder,
+  DashboardRequest,
   ShippingRatePayload,
   ShippingRateRecord,
   createCost,
@@ -19,12 +21,15 @@ import {
   deleteShippingRate,
   fetchCosts,
   fetchCurrencies,
+  fetchOrders,
+  fetchRequests,
   fetchShippingRates,
   updateCost,
   updateCurrency,
   updateShippingRate,
 } from "../lib/api";
-import { cn, formatCurrency, formatDate, safeDisplay } from "../lib/utils";
+import { useToast } from "../lib/toast-context";
+import { cn, downloadCsv, formatCurrency, formatDate, safeDisplay } from "../lib/utils";
 
 const inputClass =
   "h-9 w-full rounded-md border bg-background px-3 text-sm outline-none transition focus:ring-2 focus:ring-ring";
@@ -118,12 +123,14 @@ function PageHeader({
   loading,
   onRefresh,
   onCreate,
+  onExport,
 }: {
   title: string;
   subtitle: string;
   loading: boolean;
   onRefresh: () => void;
   onCreate: () => void;
+  onExport?: () => void;
 }) {
   return (
     <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
@@ -131,7 +138,13 @@ function PageHeader({
         <h2 className="text-2xl font-bold tracking-tight">{title}</h2>
         <p className="mt-1 text-sm text-muted-foreground">{subtitle}</p>
       </div>
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
+        {onExport ? (
+          <Button variant="outline" onClick={onExport}>
+            <Download className="h-4 w-4" />
+            Export
+          </Button>
+        ) : null}
         <Button disabled={loading} variant="outline" onClick={onRefresh}>
           <RefreshCcw className={cn("h-4 w-4", loading && "animate-spin")} />
           Refresh
@@ -145,6 +158,48 @@ function PageHeader({
   );
 }
 
+function baseCurrencyCode(currencies: CurrencyRecord[]) {
+  return (
+    currencies.find((currency) => currency.is_base && currency.is_active)?.code ||
+    currencies.find((currency) => currency.is_active)?.code ||
+    "MVR"
+  );
+}
+
+function currencyOptionLabel(currency: CurrencyRecord) {
+  return `${currency.code}${currency.symbol ? ` (${currency.symbol})` : ""}`;
+}
+
+function CurrencySelect({
+  currencies,
+  value,
+  onChange,
+  includeAll = false,
+}: {
+  currencies: CurrencyRecord[];
+  value: string;
+  onChange: (value: string) => void;
+  includeAll?: boolean;
+}) {
+  return (
+    <select className={inputClass} value={value} onChange={(event) => onChange(event.target.value)}>
+      {includeAll ? <option value="">All currencies</option> : null}
+      {!includeAll && currencies.length === 0 ? <option value={value || "MVR"}>{value || "MVR"}</option> : null}
+      {currencies.map((currency) => (
+        <option key={currency.id} value={currency.code}>
+          {currencyOptionLabel(currency)}
+          {currency.is_base ? " - base" : ""}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+function exportRows(filename: string, rows: Record<string, unknown>[], notify: (message: string, tone?: "success" | "error" | "info") => void) {
+  const exported = downloadCsv(filename, rows);
+  notify(exported ? "CSV export downloaded." : "No records to export.", exported ? "success" : "info");
+}
+
 const blankCurrency = {
   code: "",
   name: "",
@@ -155,6 +210,7 @@ const blankCurrency = {
 };
 
 export function CurrenciesPage() {
+  const { notify } = useToast();
   const [records, setRecords] = useState<CurrencyRecord[]>([]);
   const [search, setSearch] = useState("");
   const [includeInactive, setIncludeInactive] = useState(true);
@@ -172,11 +228,13 @@ export function CurrenciesPage() {
     try {
       setRecords(await fetchCurrencies({ search, includeInactive }));
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Unable to load currencies.");
+      const message = caught instanceof Error ? caught.message : "Unable to load currencies.";
+      setError(message);
+      notify(message, "error");
     } finally {
       setLoading(false);
     }
-  }, [includeInactive, search]);
+  }, [includeInactive, notify, search]);
 
   useEffect(() => {
     void load();
@@ -227,10 +285,12 @@ export function CurrenciesPage() {
       }
       closeForm();
       await load();
+      notify(editing ? "Currency updated." : "Currency created.", "success");
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : "Unable to save currency.";
       setFormError(message);
       setError(message);
+      notify(message, "error");
     } finally {
       setSaving(false);
     }
@@ -240,8 +300,43 @@ export function CurrenciesPage() {
     if (!window.confirm("Deactivate this currency?")) {
       return;
     }
-    await deleteCurrency(id);
-    await load();
+    try {
+      await deleteCurrency(id);
+      await load();
+      notify("Currency deactivated.", "success");
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : "Unable to deactivate currency.";
+      setError(message);
+      notify(message, "error");
+    }
+  }
+
+  async function setBaseCurrency(record: CurrencyRecord) {
+    try {
+      await updateCurrency(record.id, { is_base: true, is_active: true });
+      await load();
+      notify(`${record.code} set as base currency.`, "success");
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : "Unable to update base currency.";
+      setError(message);
+      notify(message, "error");
+    }
+  }
+
+  function exportCurrencies() {
+    exportRows(
+      "currencies.csv",
+      records.map((record) => ({
+        code: record.code,
+        name: record.name,
+        symbol: record.symbol,
+        exchange_rate_to_base: record.exchange_rate_to_base,
+        is_base: record.is_base,
+        is_active: record.is_active,
+        updated_at: record.updated_at,
+      })),
+      notify,
+    );
   }
 
   return (
@@ -251,6 +346,7 @@ export function CurrenciesPage() {
         subtitle="Manage exchange rates and base currency for dashboard calculations."
         title="Currencies"
         onCreate={openCreate}
+        onExport={exportCurrencies}
         onRefresh={load}
       />
 
@@ -316,7 +412,7 @@ export function CurrenciesPage() {
                       <td className="px-4 py-3">
                         <div className="flex justify-end gap-2">
                           {!record.is_base ? (
-                            <Button size="sm" variant="outline" onClick={() => updateCurrency(record.id, { is_base: true, is_active: true }).then(load)}>
+                            <Button size="sm" variant="outline" onClick={() => void setBaseCurrency(record)}>
                               Set base
                             </Button>
                           ) : null}
@@ -392,7 +488,9 @@ const blankShipping = {
 };
 
 export function ShippingRatesPage() {
+  const { notify } = useToast();
   const [records, setRecords] = useState<ShippingRateRecord[]>([]);
+  const [currencies, setCurrencies] = useState<CurrencyRecord[]>([]);
   const [filters, setFilters] = useState({ search: "", destinationCountry: "", carrier: "", currency: "", includeInactive: true });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -406,19 +504,26 @@ export function ShippingRatesPage() {
     setLoading(true);
     setError("");
     try {
-      setRecords(await fetchShippingRates(filters));
+      const [rates, activeCurrencies] = await Promise.all([
+        fetchShippingRates(filters),
+        fetchCurrencies({ includeInactive: false }),
+      ]);
+      setRecords(rates);
+      setCurrencies(activeCurrencies);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Unable to load shipping rates.");
+      const message = caught instanceof Error ? caught.message : "Unable to load shipping rates.";
+      setError(message);
+      notify(message, "error");
     } finally {
       setLoading(false);
     }
-  }, [filters]);
+  }, [filters, notify]);
 
   useEffect(() => { void load(); }, [load]);
 
   function openCreate() {
     setEditing(null);
-    setForm({ ...blankShipping });
+    setForm({ ...blankShipping, currency: baseCurrencyCode(currencies) });
     setFormError("");
     setFormOpen(true);
   }
@@ -473,10 +578,12 @@ export function ShippingRatesPage() {
       }
       closeForm();
       await load();
+      notify(editing ? "Shipping rate updated." : "Shipping rate created.", "success");
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : "Unable to save shipping rate.";
       setFormError(message);
       setError(message);
+      notify(message, "error");
     } finally {
       setSaving(false);
     }
@@ -486,8 +593,37 @@ export function ShippingRatesPage() {
     if (!window.confirm("Deactivate this shipping rate card?")) {
       return;
     }
-    await deleteShippingRate(id);
-    await load();
+    try {
+      await deleteShippingRate(id);
+      await load();
+      notify("Shipping rate deactivated.", "success");
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : "Unable to deactivate shipping rate.";
+      setError(message);
+      notify(message, "error");
+    }
+  }
+
+  function exportShippingRates() {
+    exportRows(
+      "shipping-rates.csv",
+      records.map((record) => ({
+        name: record.name,
+        origin_country: record.origin_country,
+        destination_country: record.destination_country,
+        carrier: record.carrier,
+        service_level: record.service_level,
+        min_weight: record.min_weight,
+        max_weight: record.max_weight,
+        rate: record.rate,
+        currency: record.currency,
+        estimated_days_min: record.estimated_days_min,
+        estimated_days_max: record.estimated_days_max,
+        is_active: record.is_active,
+        updated_at: record.updated_at,
+      })),
+      notify,
+    );
   }
 
   return (
@@ -497,6 +633,7 @@ export function ShippingRatesPage() {
         subtitle="Manage carrier rates by country, service, weight band, and currency."
         title="Shipping Rates"
         onCreate={openCreate}
+        onExport={exportShippingRates}
         onRefresh={load}
       />
       <Card>
@@ -504,7 +641,12 @@ export function ShippingRatesPage() {
           <input className={inputClass} placeholder="Search" value={filters.search} onChange={(e) => setFilters({ ...filters, search: e.target.value })} />
           <input className={inputClass} placeholder="Destination" value={filters.destinationCountry} onChange={(e) => setFilters({ ...filters, destinationCountry: e.target.value })} />
           <input className={inputClass} placeholder="Carrier" value={filters.carrier} onChange={(e) => setFilters({ ...filters, carrier: e.target.value })} />
-          <input className={inputClass} placeholder="Currency" value={filters.currency} onChange={(e) => setFilters({ ...filters, currency: e.target.value })} />
+          <CurrencySelect
+            includeAll
+            currencies={currencies}
+            value={filters.currency}
+            onChange={(value) => setFilters({ ...filters, currency: value })}
+          />
           <label className="flex h-9 items-center gap-2 rounded-md border px-3 text-sm">
             <input checked={filters.includeInactive} type="checkbox" onChange={(e) => setFilters({ ...filters, includeInactive: e.target.checked })} />
             Include inactive
@@ -535,7 +677,13 @@ export function ShippingRatesPage() {
             <Field label="Origin country"><input required className={inputClass} value={form.origin_country} onChange={(e)=>setForm({...form,origin_country:e.target.value})} /></Field>
             <Field label="Destination country"><input required className={inputClass} value={form.destination_country} onChange={(e)=>setForm({...form,destination_country:e.target.value})} /></Field>
             <Field label="Service level"><input className={inputClass} value={form.service_level} onChange={(e)=>setForm({...form,service_level:e.target.value})} /></Field>
-            <Field label="Currency"><input required className={inputClass} value={form.currency} onChange={(e)=>setForm({...form,currency:e.target.value})} /></Field>
+            <Field label="Currency">
+              <CurrencySelect
+                currencies={currencies}
+                value={form.currency}
+                onChange={(value) => setForm({ ...form, currency: value })}
+              />
+            </Field>
             <Field label="Min weight"><input required min="0" step="0.001" type="number" className={inputClass} value={form.min_weight} onChange={(e)=>setForm({...form,min_weight:e.target.value})} /></Field>
             <Field label="Max weight"><input required min="0" step="0.001" type="number" className={inputClass} value={form.max_weight} onChange={(e)=>setForm({...form,max_weight:e.target.value})} /></Field>
             <Field label="Rate"><input required min="0" step="0.01" type="number" className={inputClass} value={form.rate} onChange={(e)=>setForm({...form,rate:e.target.value})} /></Field>
@@ -551,118 +699,250 @@ export function ShippingRatesPage() {
   );
 }
 
-const costFields = [
-  "item_cost",
-  "international_shipping_cost",
-  "local_delivery_cost",
-  "customs_cost",
-  "payment_fee",
-  "packaging_cost",
-  "other_cost",
-  "sale_total",
+const costComponentFields = [
+  { key: "product_purchase_cost", label: "Product Purchase Cost" },
+  { key: "bml_tax", label: "BML / Payment Tax" },
+  { key: "import_tax", label: "Import Tax" },
+  { key: "shipping_cost", label: "Shipping Cost" },
+  { key: "additional_cost", label: "Additional Cost" },
 ] as const;
 
-const blankCost = {
+type CostComponentKey = (typeof costComponentFields)[number]["key"];
+type CostForm = Record<CostComponentKey | "sale_total", string> & {
+  source_type: "order" | "request" | "manual";
+  source_id: string;
+  linked_order_id: string;
+  linked_request_id: string;
+  reference_label: string;
+  customer_name: string;
+  title: string;
+  supplier_name: string;
+  currency: string;
+  notes: string;
+};
+
+const blankCost: CostForm = {
+  source_type: "manual",
+  source_id: "",
   linked_order_id: "",
   linked_request_id: "",
   reference_label: "",
-  item_cost: "0",
-  international_shipping_cost: "0",
-  local_delivery_cost: "0",
-  customs_cost: "0",
-  payment_fee: "0",
-  packaging_cost: "0",
-  other_cost: "0",
+  customer_name: "",
+  title: "",
+  supplier_name: "",
+  product_purchase_cost: "0",
+  bml_tax: "0",
+  import_tax: "0",
+  shipping_cost: "0",
+  additional_cost: "0",
   sale_total: "0",
   currency: "MVR",
   notes: "",
 };
 
+function recordType(record: CostRecord) {
+  if (record.source_type === "order" || record.linked_order_id) return "ORDER";
+  if (record.source_type === "request" || record.linked_request_id) return "REQUEST";
+  return "MANUAL";
+}
+
+function recordSourceId(record: CostRecord) {
+  return record.source_id || record.linked_order_id || record.linked_request_id || "";
+}
+
+function totalCostFromRecord(record: CostRecord) {
+  return Number(
+    record.total_cost ??
+      costComponentFields.reduce((sum, field) => sum + Number(record[field.key] || 0), 0),
+  );
+}
+
+function marginTone(record: CostRecord) {
+  const margin = record.margin_percent === null ? null : Number(record.margin_percent);
+  if (margin !== null && margin < 10) return "text-red-600 dark:text-red-400";
+  return "text-muted-foreground";
+}
+
+function costNumber(value: string) {
+  return Number(value || 0);
+}
+
 export function CostsPage() {
+  const { notify } = useToast();
   const [records, setRecords] = useState<CostRecord[]>([]);
+  const [currencies, setCurrencies] = useState<CurrencyRecord[]>([]);
   const [filters, setFilters] = useState({ search: "", currency: "" });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [editing, setEditing] = useState<CostRecord | null>(null);
-  const [form, setForm] = useState(blankCost);
+  const [form, setForm] = useState<CostForm>({ ...blankCost });
   const [formOpen, setFormOpen] = useState(false);
+  const [formStep, setFormStep] = useState<"link" | "details">("link");
   const [formError, setFormError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [linkLoading, setLinkLoading] = useState(false);
+  const [linkError, setLinkError] = useState("");
+  const [linkOrders, setLinkOrders] = useState<DashboardOrder[]>([]);
+  const [linkRequests, setLinkRequests] = useState<DashboardRequest[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      setRecords(await fetchCosts(filters));
+      const [costRecords, activeCurrencies] = await Promise.all([
+        fetchCosts(filters),
+        fetchCurrencies({ includeInactive: false }),
+      ]);
+      setRecords(costRecords);
+      setCurrencies(activeCurrencies);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Unable to load cost records.");
+      const message = caught instanceof Error ? caught.message : "Unable to load cost records.";
+      setError(message);
+      notify(message, "error");
     } finally {
       setLoading(false);
     }
-  }, [filters]);
+  }, [filters, notify]);
 
   useEffect(() => { void load(); }, [load]);
 
   const totals = useMemo(() => {
     const profit = records.reduce((sum, record) => sum + Number(record.profit || 0), 0);
     const revenue = records.reduce((sum, record) => sum + Number(record.sale_total || 0), 0);
-    return { profit, revenue };
+    const totalCost = records.reduce((sum, record) => sum + totalCostFromRecord(record), 0);
+    return { profit, revenue, totalCost };
   }, [records]);
+
+  function activeCurrencyOrBase(code: string | null | undefined) {
+    return currencies.some((currency) => currency.code === code && currency.is_active)
+      ? String(code)
+      : baseCurrencyCode(currencies);
+  }
+
+  async function loadLinkOptions() {
+    setLinkLoading(true);
+    setLinkError("");
+    try {
+      const [orders, requests] = await Promise.all([
+        fetchOrders({ page: 1, pageSize: 50 }),
+        fetchRequests({ page: 1, pageSize: 50 }),
+      ]);
+      setLinkOrders(orders.items);
+      setLinkRequests(requests.items);
+    } catch (caught) {
+      setLinkError(caught instanceof Error ? caught.message : "Unable to load live ZAPP records.");
+    } finally {
+      setLinkLoading(false);
+    }
+  }
 
   function openCreate() {
     setEditing(null);
-    setForm({ ...blankCost });
+    setForm({ ...blankCost, currency: baseCurrencyCode(currencies) });
     setFormError("");
+    setFormStep("link");
     setFormOpen(true);
+    void loadLinkOptions();
   }
 
   function openEdit(record: CostRecord) {
+    const sourceType = record.source_type || (record.linked_order_id ? "order" : record.linked_request_id ? "request" : "manual");
     setEditing(record);
     setForm({
+      source_type: sourceType,
+      source_id: recordSourceId(record),
       linked_order_id: record.linked_order_id || "",
       linked_request_id: record.linked_request_id || "",
       reference_label: record.reference_label || "",
-      item_cost: String(record.item_cost),
-      international_shipping_cost: String(record.international_shipping_cost),
-      local_delivery_cost: String(record.local_delivery_cost),
-      customs_cost: String(record.customs_cost),
-      payment_fee: String(record.payment_fee),
-      packaging_cost: String(record.packaging_cost),
-      other_cost: String(record.other_cost),
-      sale_total: String(record.sale_total),
-      currency: record.currency,
+      customer_name: record.customer_name || "",
+      title: record.title || "",
+      supplier_name: record.supplier_name || "",
+      product_purchase_cost: String(record.product_purchase_cost ?? record.item_cost ?? 0),
+      bml_tax: String(record.bml_tax ?? record.payment_fee ?? 0),
+      import_tax: String(record.import_tax ?? record.customs_cost ?? 0),
+      shipping_cost: String(
+        record.shipping_cost ??
+          Number(record.international_shipping_cost || 0) + Number(record.local_delivery_cost || 0),
+      ),
+      additional_cost: String(
+        record.additional_cost ??
+          Number(record.packaging_cost || 0) + Number(record.other_cost || 0),
+      ),
+      sale_total: String(record.sale_total || 0),
+      currency: activeCurrencyOrBase(record.currency),
       notes: record.notes || "",
     });
     setFormError("");
+    setFormStep("details");
     setFormOpen(true);
   }
 
   function closeForm() {
     setEditing(null);
-    setForm(blankCost);
+    setForm({ ...blankCost });
     setFormError("");
     setFormOpen(false);
+  }
+
+  function selectOrder(order: DashboardOrder) {
+    setForm({
+      ...blankCost,
+      source_type: "order",
+      source_id: order.id,
+      linked_order_id: order.id,
+      reference_label: order.orderName || order.orderNumber || order.id,
+      customer_name: order.customerName,
+      title: order.orderName || order.orderNumber || "Shopify order",
+      sale_total: String(order.total || 0),
+      currency: activeCurrencyOrBase(order.currency),
+    });
+    setFormStep("details");
+  }
+
+  function selectRequest(request: DashboardRequest) {
+    setForm({
+      ...blankCost,
+      source_type: "request",
+      source_id: request.id,
+      linked_request_id: request.id,
+      reference_label: request.requestNumber || request.reference || request.id,
+      customer_name: request.customerName,
+      title: request.productTitle || request.reference || "Purchase request",
+      sale_total: String(request.quotedTotal || 0),
+      currency: activeCurrencyOrBase(request.currency),
+    });
+    setFormStep("details");
   }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
     setFormError("");
+
+    if (!form.source_id.trim()) {
+      setFormError("Source ID is required.");
+      return;
+    }
+
     setSaving(true);
     const payload: CostPayload = {
-      linked_order_id: form.linked_order_id || null,
-      linked_request_id: form.linked_request_id || null,
+      source_type: form.source_type,
+      source_id: form.source_id || null,
+      linked_order_id: form.source_type === "order" ? form.source_id : null,
+      linked_request_id: form.source_type === "request" ? form.source_id : null,
       reference_label: form.reference_label || null,
-      item_cost: Number(form.item_cost),
-      international_shipping_cost: Number(form.international_shipping_cost),
-      local_delivery_cost: Number(form.local_delivery_cost),
-      customs_cost: Number(form.customs_cost),
-      payment_fee: Number(form.payment_fee),
-      packaging_cost: Number(form.packaging_cost),
-      other_cost: Number(form.other_cost),
-      sale_total: Number(form.sale_total),
+      customer_name: form.customer_name || null,
+      title: form.title || null,
+      supplier_name: form.supplier_name || null,
+      product_purchase_cost: costNumber(form.product_purchase_cost),
+      bml_tax: costNumber(form.bml_tax),
+      import_tax: costNumber(form.import_tax),
+      shipping_cost: costNumber(form.shipping_cost),
+      additional_cost: costNumber(form.additional_cost),
+      sale_total: costNumber(form.sale_total),
       currency: form.currency.toUpperCase(),
       notes: form.notes || null,
     };
+
     try {
       if (editing) {
         await updateCost(editing.id, payload);
@@ -671,10 +951,12 @@ export function CostsPage() {
       }
       closeForm();
       await load();
+      notify(editing ? "Cost record updated." : "Cost record created.", "success");
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : "Unable to save cost record.";
       setFormError(message);
       setError(message);
+      notify(message, "error");
     } finally {
       setSaving(false);
     }
@@ -682,8 +964,8 @@ export function CostsPage() {
 
   function profitTone(record: CostRecord) {
     const profit = Number(record.profit);
-    if (profit > 0) return "text-emerald-600 dark:text-emerald-400";
     if (profit < 0) return "text-red-600 dark:text-red-400";
+    if (profit > 0) return "text-emerald-600 dark:text-emerald-400";
     return "text-muted-foreground";
   }
 
@@ -691,45 +973,260 @@ export function CostsPage() {
     if (!window.confirm("Delete this cost record?")) {
       return;
     }
-    await deleteCost(id);
-    await load();
+    try {
+      await deleteCost(id);
+      await load();
+      notify("Cost record deleted.", "success");
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : "Unable to delete cost record.";
+      setError(message);
+      notify(message, "error");
+    }
+  }
+
+  function exportCosts() {
+    exportRows(
+      "internal-cost-records.csv",
+      records.map((record) => ({
+        source_type: recordType(record),
+        source_id: recordSourceId(record),
+        reference: record.reference_label,
+        customer: record.customer_name,
+        title: record.title,
+        supplier: record.supplier_name,
+        product_purchase_cost: record.product_purchase_cost,
+        bml_tax: record.bml_tax,
+        import_tax: record.import_tax,
+        shipping_cost: record.shipping_cost,
+        additional_cost: record.additional_cost,
+        sale_total: record.sale_total,
+        total_cost: totalCostFromRecord(record),
+        profit: record.profit,
+        margin_percent: record.margin_percent,
+        currency: record.currency,
+        updated_at: record.updated_at,
+      })),
+      notify,
+    );
   }
 
   return (
     <div className="mx-auto max-w-7xl space-y-5">
-      <PageHeader loading={loading} subtitle="Track internal costs and profit per order or request." title="Costs" onCreate={openCreate} onRefresh={load} />
-      <div className="grid gap-3 md:grid-cols-3">
+      <PageHeader
+        loading={loading}
+        subtitle="Track true profitability for ZAPP orders and purchase requests."
+        title="Internal Cost Records"
+        onCreate={openCreate}
+        onExport={exportCosts}
+        onRefresh={load}
+      />
+
+      <div className="grid gap-3 md:grid-cols-4">
         <Card><CardContent className="p-4"><p className="text-[10px] uppercase tracking-wider text-muted-foreground">Records</p><p className="mt-2 text-2xl font-bold">{records.length}</p></CardContent></Card>
-        <Card><CardContent className="p-4"><p className="text-[10px] uppercase tracking-wider text-muted-foreground">Sale total</p><p className="mt-2 text-2xl font-bold">{formatCurrency(totals.revenue, records[0]?.currency || "MVR")}</p></CardContent></Card>
-        <Card><CardContent className="p-4"><p className="text-[10px] uppercase tracking-wider text-muted-foreground">Profit</p><p className={cn("mt-2 text-2xl font-bold", totals.profit > 0 ? "text-emerald-600 dark:text-emerald-400" : totals.profit < 0 ? "text-red-600 dark:text-red-400" : "")}>{formatCurrency(totals.profit, records[0]?.currency || "MVR")}</p></CardContent></Card>
+        <Card><CardContent className="p-4"><p className="text-[10px] uppercase tracking-wider text-muted-foreground">Revenue</p><p className="mt-2 text-2xl font-bold">{formatCurrency(totals.revenue, records[0]?.currency || "MVR")}</p></CardContent></Card>
+        <Card><CardContent className="p-4"><p className="text-[10px] uppercase tracking-wider text-muted-foreground">Total Cost</p><p className="mt-2 text-2xl font-bold">{formatCurrency(totals.totalCost, records[0]?.currency || "MVR")}</p></CardContent></Card>
+        <Card><CardContent className="p-4"><p className="text-[10px] uppercase tracking-wider text-muted-foreground">Profit</p><p className={cn("mt-2 text-2xl font-bold", totals.profit < 0 ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400")}>{formatCurrency(totals.profit, records[0]?.currency || "MVR")}</p></CardContent></Card>
       </div>
-      <Card><CardContent className="grid gap-3 p-4 md:grid-cols-[1fr_160px]"><input className={inputClass} placeholder="Search reference, order, request, notes" value={filters.search} onChange={(e)=>setFilters({...filters,search:e.target.value})} /><input className={inputClass} placeholder="Currency" value={filters.currency} onChange={(e)=>setFilters({...filters,currency:e.target.value})} /></CardContent></Card>
+
+      <Card>
+        <CardContent className="grid gap-3 p-4 md:grid-cols-[1fr_200px]">
+          <label className="relative block">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <input
+              className={cn(inputClass, "pl-9")}
+              placeholder="Search source ID, reference, customer, title, supplier"
+              value={filters.search}
+              onChange={(event) => setFilters({ ...filters, search: event.target.value })}
+            />
+          </label>
+          <CurrencySelect
+            includeAll
+            currencies={currencies}
+            value={filters.currency}
+            onChange={(value) => setFilters({ ...filters, currency: value })}
+          />
+        </CardContent>
+      </Card>
+
       {error ? <ErrorBanner error={error} onRetry={load} /> : null}
+
       <Card className="overflow-hidden">
-        <CardHeader className="border-b p-4"><CardTitle>Cost Records</CardTitle></CardHeader>
-        {loading ? <CardContent className="space-y-3 p-4">{[0,1,2].map((i)=><div key={i} className="h-14 animate-pulse rounded-md bg-muted" />)}</CardContent> : records.length === 0 ? <EmptyState label="cost records" /> : (
+        <CardHeader className="flex flex-row items-center justify-between gap-3 border-b p-4">
+          <CardTitle>Internal Cost Records</CardTitle>
+          <Badge variant="muted">{records.length} records</Badge>
+        </CardHeader>
+        {loading ? (
+          <CardContent className="space-y-3 p-4">{[0, 1, 2].map((i) => <div key={i} className="h-14 animate-pulse rounded-md bg-muted" />)}</CardContent>
+        ) : records.length === 0 ? (
+          <EmptyState label="cost records" />
+        ) : (
           <>
-            <div className="hidden overflow-x-auto md:block">
-              <table className="w-full text-left text-xs"><thead className="bg-muted/50 text-[10px] uppercase tracking-wider text-muted-foreground"><tr><th className="px-4 py-3">Reference</th><th className="px-4 py-3">Sale</th><th className="px-4 py-3">Profit</th><th className="px-4 py-3">Margin</th><th className="px-4 py-3">Updated</th><th className="px-4 py-3 text-right">Actions</th></tr></thead><tbody className="divide-y">{records.map((record)=><tr key={record.id} className="hover:bg-muted/30"><td className="px-4 py-3 font-medium">{safeDisplay(record.reference_label || record.linked_order_id || record.linked_request_id, `Cost #${record.id}`)}<p className="mt-1 text-muted-foreground">{safeDisplay(record.linked_order_id || record.linked_request_id)}</p></td><td className="px-4 py-3">{formatCurrency(Number(record.sale_total), record.currency)}</td><td className={cn("px-4 py-3 font-semibold", profitTone(record))}>{formatCurrency(Number(record.profit), record.currency)}</td><td className="px-4 py-3">{record.margin_percent === null ? "--" : `${Number(record.margin_percent).toFixed(2)}%`}</td><td className="px-4 py-3">{formatDate(record.updated_at)}</td><td className="px-4 py-3"><div className="flex justify-end gap-2"><Button size="icon" variant="ghost" onClick={()=>openEdit(record)}><Pencil className="h-4 w-4" /></Button><Button size="icon" variant="ghost" onClick={()=>removeCost(record.id)}><Trash2 className="h-4 w-4" /></Button></div></td></tr>)}</tbody></table>
+            <div className="hidden overflow-x-auto lg:block">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-muted/50 text-[10px] uppercase tracking-wider text-muted-foreground">
+                  <tr>
+                    <th className="px-4 py-3">Type</th>
+                    <th className="px-4 py-3">Reference</th>
+                    <th className="px-4 py-3">Customer</th>
+                    <th className="px-4 py-3">Revenue</th>
+                    <th className="px-4 py-3">Total Cost</th>
+                    <th className="px-4 py-3">Profit</th>
+                    <th className="px-4 py-3">Margin</th>
+                    <th className="px-4 py-3 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {records.map((record) => (
+                    <tr key={record.id} className="hover:bg-muted/30">
+                      <td className="px-4 py-3"><Badge variant={recordType(record) === "ORDER" ? "default" : recordType(record) === "REQUEST" ? "success" : "muted"}>{recordType(record)}</Badge></td>
+                      <td className="px-4 py-3 font-medium">
+                        {safeDisplay(record.reference_label || recordSourceId(record), `Cost #${record.id}`)}
+                        <p className="mt-1 break-all font-mono text-[11px] text-muted-foreground">{safeDisplay(recordSourceId(record))}</p>
+                        {record.title ? <p className="mt-1 truncate text-muted-foreground">{record.title}</p> : null}
+                      </td>
+                      <td className="px-4 py-3">{safeDisplay(record.customer_name || record.supplier_name)}</td>
+                      <td className="px-4 py-3">{formatCurrency(Number(record.sale_total), record.currency)}</td>
+                      <td className="px-4 py-3">{formatCurrency(totalCostFromRecord(record), record.currency)}</td>
+                      <td className={cn("px-4 py-3 font-semibold", profitTone(record))}>
+                        <span className="inline-flex items-center gap-1">
+                          {Number(record.profit) < 0 ? <AlertCircle className="h-3.5 w-3.5" /> : null}
+                          {formatCurrency(Number(record.profit), record.currency)}
+                        </span>
+                      </td>
+                      <td className={cn("px-4 py-3 font-medium", marginTone(record))}>
+                        {record.margin_percent === null ? "--" : `${Number(record.margin_percent).toFixed(2)}%`}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex justify-end gap-2">
+                          <Button size="icon" variant="ghost" onClick={() => openEdit(record)}><Pencil className="h-4 w-4" /></Button>
+                          <Button size="icon" variant="ghost" onClick={() => removeCost(record.id)}><Trash2 className="h-4 w-4" /></Button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
-            <div className="grid gap-3 p-4 md:hidden">{records.map((record)=><div key={record.id} className="rounded-md border p-4"><div className="flex items-start justify-between"><div><p className="font-semibold">{safeDisplay(record.reference_label, `Cost #${record.id}`)}</p><p className="mt-1 text-xs text-muted-foreground">{formatDate(record.updated_at)}</p></div><p className={cn("font-semibold", profitTone(record))}>{formatCurrency(Number(record.profit), record.currency)}</p></div><p className="mt-3 text-sm">Sale {formatCurrency(Number(record.sale_total), record.currency)} · Margin {record.margin_percent === null ? "--" : `${Number(record.margin_percent).toFixed(2)}%`}</p><div className="mt-3 flex gap-2"><Button size="sm" variant="outline" onClick={()=>openEdit(record)}>Edit</Button><Button size="sm" variant="outline" onClick={()=>removeCost(record.id)}>Delete</Button></div></div>)}</div>
+            <div className="grid gap-3 p-4 lg:hidden">
+              {records.map((record) => (
+                <div key={record.id} className="rounded-md border p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <Badge variant={recordType(record) === "ORDER" ? "default" : recordType(record) === "REQUEST" ? "success" : "muted"}>{recordType(record)}</Badge>
+                      <p className="mt-2 font-semibold">{safeDisplay(record.reference_label || recordSourceId(record), `Cost #${record.id}`)}</p>
+                      <p className="mt-1 break-all font-mono text-[11px] text-muted-foreground">{safeDisplay(recordSourceId(record))}</p>
+                    </div>
+                    <p className={cn("shrink-0 font-semibold", profitTone(record))}>{formatCurrency(Number(record.profit), record.currency)}</p>
+                  </div>
+                  <p className="mt-3 text-sm text-muted-foreground">
+                    Revenue {formatCurrency(Number(record.sale_total), record.currency)} · Cost {formatCurrency(totalCostFromRecord(record), record.currency)} · Margin {record.margin_percent === null ? "--" : `${Number(record.margin_percent).toFixed(2)}%`}
+                  </p>
+                  <div className="mt-3 flex gap-2">
+                    <Button size="sm" variant="outline" onClick={() => openEdit(record)}>Edit</Button>
+                    <Button size="sm" variant="outline" onClick={() => removeCost(record.id)}>Delete</Button>
+                  </div>
+                </div>
+              ))}
+            </div>
           </>
         )}
       </Card>
+
       {formOpen ? (
         <Modal title={editing ? "Edit Cost Record" : "New Cost Record"} onClose={closeForm}>
-          <form className="grid gap-4 sm:grid-cols-2" onSubmit={submit}>
-            {formError ? <div className="sm:col-span-2"><InlineFormError error={formError} /></div> : null}
-            <Field label="Reference label"><input className={inputClass} value={form.reference_label} onChange={(e)=>setForm({...form,reference_label:e.target.value})} /></Field>
-            <Field label="Currency"><input required className={inputClass} value={form.currency} onChange={(e)=>setForm({...form,currency:e.target.value})} /></Field>
-            <Field label="Linked live order ID"><input className={inputClass} value={form.linked_order_id} onChange={(e)=>setForm({...form,linked_order_id:e.target.value})} /></Field>
-            <Field label="Linked live request ID"><input className={inputClass} value={form.linked_request_id} onChange={(e)=>setForm({...form,linked_request_id:e.target.value})} /></Field>
-            {costFields.map((field) => <Field key={field} label={field.replace(/_/g, " ")}><input required min="0" step="0.01" type="number" className={inputClass} value={form[field]} onChange={(e)=>setForm({...form,[field]:e.target.value})} /></Field>)}
-            <Field label="Notes"><textarea className={textareaClass} value={form.notes} onChange={(e)=>setForm({...form,notes:e.target.value})} /></Field>
-            <div className="flex justify-end gap-2 sm:col-span-2"><Button disabled={saving} type="button" variant="outline" onClick={closeForm}>Cancel</Button><Button disabled={saving} type="submit">{saving ? "Saving..." : "Save"}</Button></div>
-          </form>
+          {formStep === "link" ? (
+            <div className="space-y-4">
+              {linkError ? <InlineFormError error={linkError} /> : null}
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-sm font-medium">Link to ZAPP order/request</p>
+                  <p className="mt-1 text-sm text-muted-foreground">Choose a live record to prefill details, or enter manually.</p>
+                </div>
+                <Button variant="outline" onClick={() => setFormStep("details")}>Skip - enter manually</Button>
+              </div>
+              {linkLoading ? (
+                <div className="space-y-3">{[0, 1, 2].map((i) => <div key={i} className="h-16 animate-pulse rounded-md bg-muted" />)}</div>
+              ) : (
+                <div className="grid gap-4 lg:grid-cols-2">
+                  <LinkPicker title="Orders" empty="No live orders loaded">
+                    {linkOrders.map((order) => (
+                      <button key={order.id} className="w-full rounded-md border p-3 text-left transition hover:bg-muted/40" type="button" onClick={() => selectOrder(order)}>
+                        <p className="text-sm font-medium">{safeDisplay(order.orderName || order.orderNumber || order.id)}</p>
+                        <p className="mt-1 break-all font-mono text-[11px] text-muted-foreground">{safeDisplay(order.id)}</p>
+                        <p className="mt-2 text-xs text-muted-foreground">{safeDisplay(order.customerName)} · {formatCurrency(order.total, order.currency)}</p>
+                      </button>
+                    ))}
+                  </LinkPicker>
+                  <LinkPicker title="Requests" empty="No live requests loaded">
+                    {linkRequests.map((request) => (
+                      <button key={request.id} className="w-full rounded-md border p-3 text-left transition hover:bg-muted/40" type="button" onClick={() => selectRequest(request)}>
+                        <p className="text-sm font-medium">{safeDisplay(request.requestNumber || request.reference || request.id)}</p>
+                        <p className="mt-1 break-all font-mono text-[11px] text-muted-foreground">{safeDisplay(request.id)}</p>
+                        <p className="mt-2 text-xs text-muted-foreground">{safeDisplay(request.customerName)} · {formatCurrency(request.quotedTotal, request.currency)}</p>
+                      </button>
+                    ))}
+                  </LinkPicker>
+                </div>
+              )}
+            </div>
+          ) : (
+            <form className="grid gap-4 sm:grid-cols-2" onSubmit={submit}>
+              {formError ? <div className="sm:col-span-2"><InlineFormError error={formError} /></div> : null}
+              {!editing ? (
+                <div className="sm:col-span-2">
+                  <Button type="button" variant="outline" onClick={() => setFormStep("link")}>Back to ZAPP link</Button>
+                </div>
+              ) : null}
+              <Field label="Source Type">
+                <select className={inputClass} value={form.source_type} onChange={(event) => setForm({ ...form, source_type: event.target.value as CostForm["source_type"] })}>
+                  <option value="order">Shopify Order</option>
+                  <option value="request">Purchase Request</option>
+                  <option value="manual">Manual</option>
+                </select>
+              </Field>
+              <Field label="Source ID"><input required className={inputClass} value={form.source_id} onChange={(event) => setForm({ ...form, source_id: event.target.value })} /></Field>
+              <Field label="Reference"><input className={inputClass} value={form.reference_label} onChange={(event) => setForm({ ...form, reference_label: event.target.value })} /></Field>
+              <Field label="Customer"><input className={inputClass} value={form.customer_name} onChange={(event) => setForm({ ...form, customer_name: event.target.value })} /></Field>
+              <Field label="Title"><input className={inputClass} value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} /></Field>
+              <Field label="Supplier"><input className={inputClass} value={form.supplier_name} onChange={(event) => setForm({ ...form, supplier_name: event.target.value })} /></Field>
+              <Field label="Revenue"><input required min="0" step="0.01" type="number" className={inputClass} value={form.sale_total} onChange={(event) => setForm({ ...form, sale_total: event.target.value })} /></Field>
+              <Field label="Currency">
+                <CurrencySelect
+                  currencies={currencies}
+                  value={form.currency}
+                  onChange={(value) => setForm({ ...form, currency: value })}
+                />
+              </Field>
+              <div className="space-y-3 sm:col-span-2">
+                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Cost Breakdown</p>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  {costComponentFields.map((field) => (
+                    <Field key={field.key} label={field.label}>
+                      <input required min="0" step="0.01" type="number" className={inputClass} value={form[field.key]} onChange={(event) => setForm({ ...form, [field.key]: event.target.value })} />
+                    </Field>
+                  ))}
+                </div>
+              </div>
+              <div className="sm:col-span-2">
+                <Field label="Notes"><textarea className={textareaClass} value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} /></Field>
+              </div>
+              <div className="flex justify-end gap-2 sm:col-span-2"><Button disabled={saving} type="button" variant="outline" onClick={closeForm}>Cancel</Button><Button disabled={saving} type="submit">{saving ? "Saving..." : "Save"}</Button></div>
+            </form>
+          )}
         </Modal>
       ) : null}
+    </div>
+  );
+}
+
+function LinkPicker({ title, empty, children }: { title: string; empty: string; children: ReactNode }) {
+  const hasChildren = Array.isArray(children) ? children.length > 0 : Boolean(children);
+  return (
+    <div className="space-y-3">
+      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{title}</p>
+      <div className="max-h-80 space-y-2 overflow-y-auto pr-1">
+        {hasChildren ? children : <div className="rounded-md border p-4 text-sm text-muted-foreground">{empty}</div>}
+      </div>
     </div>
   );
 }
