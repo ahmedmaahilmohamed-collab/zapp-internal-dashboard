@@ -209,6 +209,21 @@ const blankCurrency = {
   is_active: true,
 };
 
+const commonCurrencies = [
+  { code: "MVR", name: "Maldivian Rufiyaa", symbol: "ރ" },
+  { code: "USD", name: "United States Dollar", symbol: "$" },
+  { code: "AED", name: "UAE Dirham", symbol: "د.إ" },
+  { code: "EUR", name: "Euro", symbol: "€" },
+  { code: "GBP", name: "British Pound", symbol: "£" },
+  { code: "MYR", name: "Malaysian Ringgit", symbol: "RM" },
+  { code: "SGD", name: "Singapore Dollar", symbol: "S$" },
+  { code: "THB", name: "Thai Baht", symbol: "฿" },
+  { code: "CNY", name: "Chinese Yuan", symbol: "¥" },
+  { code: "JPY", name: "Japanese Yen", symbol: "¥" },
+  { code: "INR", name: "Indian Rupee", symbol: "₹" },
+  { code: "LKR", name: "Sri Lankan Rupee", symbol: "Rs" },
+];
+
 export function CurrenciesPage() {
   const { notify } = useToast();
   const [records, setRecords] = useState<CurrencyRecord[]>([]);
@@ -220,6 +235,8 @@ export function CurrenciesPage() {
   const [form, setForm] = useState(blankCurrency);
   const [formOpen, setFormOpen] = useState(false);
   const [formError, setFormError] = useState("");
+  const [currencyPickerSearch, setCurrencyPickerSearch] = useState("");
+  const [customCurrencyOpen, setCustomCurrencyOpen] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
@@ -244,6 +261,8 @@ export function CurrenciesPage() {
     setEditing(null);
     setForm({ ...blankCurrency });
     setFormError("");
+    setCurrencyPickerSearch("");
+    setCustomCurrencyOpen(false);
     setFormOpen(true);
   }
 
@@ -258,6 +277,8 @@ export function CurrenciesPage() {
       is_active: record.is_active,
     });
     setFormError("");
+    setCurrencyPickerSearch("");
+    setCustomCurrencyOpen(!commonCurrencies.some((currency) => currency.code === record.code));
     setFormOpen(true);
   }
 
@@ -265,12 +286,38 @@ export function CurrenciesPage() {
     setEditing(null);
     setForm(blankCurrency);
     setFormError("");
+    setCurrencyPickerSearch("");
+    setCustomCurrencyOpen(false);
     setFormOpen(false);
+  }
+
+  const filteredCommonCurrencies = useMemo(() => {
+    const query = currencyPickerSearch.trim().toLowerCase();
+    if (!query) {
+      return commonCurrencies;
+    }
+    return commonCurrencies.filter((currency) =>
+      [currency.code, currency.name, currency.symbol].some((value) => value.toLowerCase().includes(query)),
+    );
+  }, [currencyPickerSearch]);
+
+  function selectCommonCurrency(currency: (typeof commonCurrencies)[number]) {
+    setForm((current) => ({
+      ...current,
+      code: currency.code,
+      name: currency.name,
+      symbol: currency.symbol,
+    }));
+    setCustomCurrencyOpen(false);
   }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
     setFormError("");
+    if (!form.code.trim() || !form.name.trim()) {
+      setFormError("Choose a currency or use custom currency entry.");
+      return;
+    }
     setSaving(true);
     const payload: CurrencyPayload = {
       ...form,
@@ -454,9 +501,64 @@ export function CurrenciesPage() {
         <Modal title={editing ? "Edit Currency" : "New Currency"} onClose={closeForm}>
           <form className="grid gap-4 sm:grid-cols-2" onSubmit={submit}>
             {formError ? <div className="sm:col-span-2"><InlineFormError error={formError} /></div> : null}
-            <Field label="Code"><input required className={inputClass} value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} /></Field>
-            <Field label="Name"><input required className={inputClass} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
-            <Field label="Symbol"><input className={inputClass} value={form.symbol} onChange={(e) => setForm({ ...form, symbol: e.target.value })} /></Field>
+            <div className="space-y-3 sm:col-span-2">
+              <Field label="Find currency">
+                <input
+                  className={inputClass}
+                  placeholder="Search MVR, USD, Malaysia, Euro..."
+                  value={currencyPickerSearch}
+                  onChange={(event) => setCurrencyPickerSearch(event.target.value)}
+                />
+              </Field>
+              <div className="grid max-h-56 gap-2 overflow-y-auto rounded-md border bg-muted/20 p-2 sm:grid-cols-2">
+                {filteredCommonCurrencies.map((currency) => {
+                  const selected = form.code.toUpperCase() === currency.code;
+                  return (
+                    <button
+                      key={currency.code}
+                      className={cn(
+                        "rounded-md border bg-background p-3 text-left transition hover:bg-muted/60",
+                        selected && "border-primary bg-primary/10",
+                      )}
+                      type="button"
+                      onClick={() => selectCommonCurrency(currency)}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="font-semibold">{currency.code}</span>
+                        <span className="text-sm text-muted-foreground">{currency.symbol}</span>
+                      </div>
+                      <p className="mt-1 truncate text-xs text-muted-foreground">{currency.name}</p>
+                    </button>
+                  );
+                })}
+                {filteredCommonCurrencies.length === 0 ? (
+                  <div className="rounded-md border p-3 text-sm text-muted-foreground sm:col-span-2">
+                    No common currency matches. Use custom entry below.
+                  </div>
+                ) : null}
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setCustomCurrencyOpen((current) => !current)}
+              >
+                {customCurrencyOpen ? "Hide custom currency fields" : "Advanced: custom currency entry"}
+              </Button>
+            </div>
+            {customCurrencyOpen ? (
+              <>
+                <Field label="Code"><input required className={inputClass} value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} /></Field>
+                <Field label="Name"><input required className={inputClass} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
+                <Field label="Symbol"><input className={inputClass} value={form.symbol} onChange={(e) => setForm({ ...form, symbol: e.target.value })} /></Field>
+              </>
+            ) : (
+              <div className="rounded-md border bg-muted/20 p-3 sm:col-span-2">
+                <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Selected currency</p>
+                <p className="mt-2 text-sm font-semibold">
+                  {form.code ? `${form.code} - ${form.name || "Unnamed currency"} ${form.symbol ? `(${form.symbol})` : ""}` : "Choose a currency above"}
+                </p>
+              </div>
+            )}
             <Field label="Rate to base"><input required min="0.000001" step="0.000001" type="number" className={inputClass} value={form.exchange_rate_to_base} onChange={(e) => setForm({ ...form, exchange_rate_to_base: e.target.value })} /></Field>
             <label className="flex items-center gap-2 text-sm"><input checked={form.is_base} type="checkbox" onChange={(e) => setForm({ ...form, is_base: e.target.checked })} /> Base currency</label>
             <label className="flex items-center gap-2 text-sm"><input checked={form.is_active} type="checkbox" onChange={(e) => setForm({ ...form, is_active: e.target.checked })} /> Active</label>

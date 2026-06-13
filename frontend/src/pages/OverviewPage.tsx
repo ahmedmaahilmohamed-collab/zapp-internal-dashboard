@@ -8,11 +8,11 @@ import {
   Coins,
   Database,
   FileText,
-  MailCheck,
   Percent,
   RefreshCcw,
   ShieldCheck,
   ShoppingCart,
+  TrendingUp,
   Truck,
   Users,
 } from "lucide-react";
@@ -21,9 +21,7 @@ import { Badge, BadgeProps } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import {
-  DashboardOrder,
-  DashboardEmailLog,
-  DashboardRequest,
+  OverviewFinanceTrendPoint,
   OverviewRecentCostRecord,
   OverviewStatsResponse,
   OverviewZappSection,
@@ -32,8 +30,8 @@ import {
 import { useAuth } from "../lib/auth-context";
 import { cn, formatCurrency, formatDate, safeDisplay } from "../lib/utils";
 
-function formatPercent(value: number | null) {
-  return value === null ? "--" : `${Number(value).toFixed(2)}%`;
+function formatPercent(value: number | null | undefined) {
+  return value === null || value === undefined ? "--" : `${Number(value).toFixed(2)}%`;
 }
 
 function numberLabel(value: number | null | undefined) {
@@ -45,6 +43,14 @@ function statusVariant(status: string): BadgeProps["variant"] {
   if (status === "not_configured" || status === "timeout" || status === "degraded") return "warning";
   if (status === "unauthorized" || status === "forbidden" || status === "server_error") return "destructive";
   return "muted";
+}
+
+function shortDate(value: string) {
+  try {
+    return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(new Date(value));
+  } catch {
+    return value;
+  }
 }
 
 export function OverviewPage() {
@@ -82,7 +88,7 @@ export function OverviewPage() {
         <div className="flex items-end justify-between">
           <div className="space-y-2">
             <div className="h-7 w-36 animate-pulse rounded bg-muted" />
-            <div className="h-4 w-64 animate-pulse rounded bg-muted" />
+            <div className="h-4 w-72 animate-pulse rounded bg-muted" />
           </div>
           <div className="h-9 w-24 animate-pulse rounded-md bg-muted" />
         </div>
@@ -91,7 +97,7 @@ export function OverviewPage() {
             <div key={index} className="h-28 animate-pulse rounded-lg bg-muted" />
           ))}
         </div>
-        <div className="grid gap-5 xl:grid-cols-[0.9fr_1.1fr]">
+        <div className="grid gap-5 xl:grid-cols-2">
           <div className="h-80 animate-pulse rounded-lg bg-muted" />
           <div className="h-80 animate-pulse rounded-lg bg-muted" />
         </div>
@@ -130,6 +136,8 @@ export function OverviewPage() {
     );
   }
 
+  const conversion = stats.zappApi.requestConversion;
+
   return (
     <div className="mx-auto max-w-7xl space-y-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
@@ -141,7 +149,7 @@ export function OverviewPage() {
             </Badge>
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
-            Local finance, configuration, and ZAPP API availability. Last updated {formatDate(stats.generatedAt)}.
+            Executive view of finance performance, request conversion, and ZAPP API availability. Last updated {formatDate(stats.generatedAt)}.
           </p>
         </div>
         <Button disabled={loading} variant="outline" onClick={load}>
@@ -151,27 +159,15 @@ export function OverviewPage() {
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard
-          icon={CircleDollarSign}
-          label="Revenue / Sales"
-          value={formatCurrency(stats.finance.totalSaleValue, financeCurrency)}
-        />
-        <StatCard
-          icon={Database}
-          label="Costs"
-          value={formatCurrency(stats.finance.totalCostValue, financeCurrency)}
-        />
+        <StatCard icon={CircleDollarSign} label="Revenue / Sales" value={formatCurrency(stats.finance.totalSaleValue, financeCurrency)} />
+        <StatCard icon={Database} label="Costs" value={formatCurrency(stats.finance.totalCostValue, financeCurrency)} />
         <StatCard
           icon={BarChart3}
           label="Profit"
           tone={stats.finance.totalProfit >= 0 ? "success" : "danger"}
           value={formatCurrency(stats.finance.totalProfit, financeCurrency)}
         />
-        <StatCard
-          icon={Percent}
-          label="Average Margin"
-          value={formatPercent(stats.finance.averageMarginPercent)}
-        />
+        <StatCard icon={Percent} label="Average Margin" value={formatPercent(stats.finance.averageMarginPercent)} />
         <StatCard
           icon={FileText}
           label="Cost Records"
@@ -179,48 +175,33 @@ export function OverviewPage() {
           value={numberLabel(stats.finance.totalCostRecords)}
         />
         <StatCard
+          icon={ShoppingCart}
+          label="Requests"
+          meta={conversion.countsMayBePartial ? `${conversion.sampleSize} sampled` : "Live request summary"}
+          tone={conversion.available ? "success" : "warning"}
+          value={numberLabel(conversion.available ? conversion.total : null)}
+        />
+        <StatCard
+          icon={TrendingUp}
+          label="Conversion Rate"
+          meta={`${numberLabel(conversion.approvedPaid)} approved/paid`}
+          tone={conversion.conversionRate ? "success" : undefined}
+          value={formatPercent(conversion.conversionRate)}
+        />
+        <StatCard
+          icon={AlertCircle}
+          label="Cancellation Rate"
+          meta={`${numberLabel(conversion.cancelled)} cancelled`}
+          tone={conversion.cancelled ? "warning" : undefined}
+          value={formatPercent(conversion.cancellationRate)}
+        />
+        <StatCard icon={Coins} label="Active Currencies" value={numberLabel(stats.configuration.activeCurrenciesCount)} />
+        <StatCard icon={Truck} label="Shipping Rates" value={numberLabel(stats.configuration.activeShippingRateCardsCount)} />
+        <StatCard
           icon={ShieldCheck}
           label="Linked Records"
           meta={`${stats.finance.linkedOrdersCount} orders · ${stats.finance.linkedRequestsCount} requests`}
           value={numberLabel(stats.finance.linkedOrdersCount + stats.finance.linkedRequestsCount)}
-        />
-        <StatCard
-          icon={Coins}
-          label="Active Currencies"
-          value={numberLabel(stats.configuration.activeCurrenciesCount)}
-        />
-        <StatCard
-          icon={Truck}
-          label="Shipping Rates"
-          value={numberLabel(stats.configuration.activeShippingRateCardsCount)}
-        />
-        <StatCard
-          icon={ShoppingCart}
-          label="Live Orders"
-          meta={stats.zappApi.orders.available ? "Live API connected" : stats.zappApi.orders.status}
-          tone={stats.zappApi.orders.available ? "success" : "warning"}
-          value={numberLabel(stats.zappApi.orders.total)}
-        />
-        <StatCard
-          icon={FileText}
-          label="Live Requests"
-          meta={stats.zappApi.requests.available ? "Live API connected" : stats.zappApi.requests.status}
-          tone={stats.zappApi.requests.available ? "success" : "warning"}
-          value={numberLabel(stats.zappApi.requests.total)}
-        />
-        <StatCard
-          icon={MailCheck}
-          label="Email Logs"
-          meta={stats.zappApi.emailLogs.available ? "Live API connected" : stats.zappApi.emailLogs.status}
-          tone={stats.zappApi.emailLogs.available ? "success" : "warning"}
-          value={numberLabel(stats.zappApi.emailLogs.total)}
-        />
-        <StatCard
-          icon={AlertCircle}
-          label="Cancelled / Refunded"
-          meta={stats.zappApi.orders.countsMayBePartial || stats.zappApi.requests.countsMayBePartial ? "Counts may be partial" : "Live status count"}
-          tone={stats.zappApi.orders.cancelledCount + stats.zappApi.requests.cancelledCount ? "warning" : undefined}
-          value={numberLabel(stats.zappApi.orders.cancelledCount + stats.zappApi.requests.cancelledCount)}
         />
         {stats.permissions.canManageAccess ? (
           <StatCard
@@ -232,19 +213,22 @@ export function OverviewPage() {
         ) : null}
       </div>
 
-      <div className="grid gap-5 xl:grid-cols-[0.85fr_1.15fr]">
+      <div className="grid gap-5 xl:grid-cols-[1.25fr_0.75fr]">
+        <FinanceSummaryCard currency={financeCurrency} records={stats.recentCostRecords} stats={stats} />
         <ZappStatusCard stats={stats} />
-        <RecentCosts records={stats.recentCostRecords} />
       </div>
 
       <div className="grid gap-5 xl:grid-cols-2">
-        <RecentOrders section={stats.zappApi.orders} />
-        <RecentRequests section={stats.zappApi.requests} />
+        <RevenueCostsChart currency={financeCurrency} data={stats.financeTrend} />
+        <ProfitTrendChart currency={financeCurrency} data={stats.financeTrend} />
+        <MarginTrendChart data={stats.financeTrend} />
+        <RequestConversionCard conversion={conversion} />
       </div>
 
-      {stats.permissions.canViewDiagnostics ? (
-        <RecentEmailLogs section={stats.zappApi.emailLogs} />
-      ) : null}
+      <div className="grid gap-5 xl:grid-cols-2">
+        <StatusBreakdownCard label="Order Status Breakdown" section={stats.zappApi.orders} />
+        <StatusBreakdownCard label="Request Status Breakdown" section={stats.zappApi.requests} />
+      </div>
     </div>
   );
 }
@@ -290,6 +274,44 @@ function StatCard({
   );
 }
 
+function FinanceSummaryCard({
+  stats,
+  records,
+  currency,
+}: {
+  stats: OverviewStatsResponse;
+  records: OverviewRecentCostRecord[];
+  currency: string;
+}) {
+  const latest = records[0];
+  return (
+    <Card>
+      <CardHeader className="border-b p-4">
+        <CardTitle>Finance Summary</CardTitle>
+      </CardHeader>
+      <CardContent className="grid gap-4 p-4 lg:grid-cols-3">
+        <SummaryTile label="Total revenue" value={formatCurrency(stats.finance.totalSaleValue, currency)} />
+        <SummaryTile label="Total cost" value={formatCurrency(stats.finance.totalCostValue, currency)} />
+        <SummaryTile label="Total profit" value={formatCurrency(stats.finance.totalProfit, currency)} tone={stats.finance.totalProfit >= 0 ? "success" : "danger"} />
+        <SummaryTile label="Linked orders" value={numberLabel(stats.finance.linkedOrdersCount)} />
+        <SummaryTile label="Linked requests" value={numberLabel(stats.finance.linkedRequestsCount)} />
+        <SummaryTile label="Last cost update" value={latest ? formatDate(latest.updatedAt) : "--"} />
+      </CardContent>
+    </Card>
+  );
+}
+
+function SummaryTile({ label, value, tone }: { label: string; value: string; tone?: "success" | "danger" }) {
+  return (
+    <div className="rounded-md border bg-muted/20 p-3">
+      <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</p>
+      <p className={cn("mt-2 truncate text-sm font-semibold", tone === "success" && "text-emerald-600 dark:text-emerald-400", tone === "danger" && "text-red-600 dark:text-red-400")}>
+        {value}
+      </p>
+    </div>
+  );
+}
+
 function ZappStatusCard({ stats }: { stats: OverviewStatsResponse }) {
   return (
     <Card>
@@ -306,16 +328,14 @@ function ZappStatusCard({ stats }: { stats: OverviewStatsResponse }) {
       </CardHeader>
       <CardContent className="space-y-4 p-4">
         <div className="rounded-md border bg-muted/30 p-4">
-          <p className="text-sm font-medium">
-            {stats.zappApi.configured ? "Configured" : "Not configured"}
-          </p>
+          <p className="text-sm font-medium">{stats.zappApi.configured ? "Configured" : "Not configured"}</p>
           <p className="mt-1 text-sm text-muted-foreground">{stats.zappApi.message}</p>
           <p className="mt-2 text-xs text-muted-foreground">
-            Finance totals come from this dashboard database. Live order, request, and email-log counts come from the ZAPP API when configured.
+            Finance totals are local. Live request/order summaries are shown only when the read-only ZAPP API is reachable.
           </p>
           <p className="mt-3 text-xs text-muted-foreground">Checked {formatDate(stats.zappApi.checkedAt)}</p>
         </div>
-        <div className="grid gap-3 md:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-3">
           <ZappMiniStatus label="Orders" section={stats.zappApi.orders} />
           <ZappMiniStatus label="Requests" section={stats.zappApi.requests} />
           <ZappMiniStatus label="Email Logs" section={stats.zappApi.emailLogs} />
@@ -337,13 +357,7 @@ function ZappStatusCard({ stats }: { stats: OverviewStatsResponse }) {
   );
 }
 
-function ZappMiniStatus<T>({
-  label,
-  section,
-}: {
-  label: string;
-  section: OverviewZappSection<T>;
-}) {
+function ZappMiniStatus<T>({ label, section }: { label: string; section: OverviewZappSection<T> }) {
   return (
     <div className="min-w-0 rounded-md border p-3">
       <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
@@ -354,230 +368,252 @@ function ZappMiniStatus<T>({
       <p className="mt-1 text-xs text-muted-foreground">
         HTTP {safeDisplay(section.upstreamStatus)} · {safeDisplay(section.elapsedMs)} ms
       </p>
-      {section.cancelledCount ? (
-        <p className="mt-1 text-xs text-orange-600 dark:text-orange-400">
-          {section.cancelledCount} cancelled/refunded
-        </p>
-      ) : null}
     </div>
   );
 }
 
-function RecentCosts({ records }: { records: OverviewRecentCostRecord[] }) {
+function RevenueCostsChart({ data, currency }: { data: OverviewFinanceTrendPoint[]; currency: string }) {
   return (
-    <Card className="overflow-hidden">
+    <Card>
       <CardHeader className="border-b p-4">
-        <CardTitle>Recent Cost Records</CardTitle>
+        <CardTitle>Revenue vs Costs</CardTitle>
       </CardHeader>
-      {records.length === 0 ? (
-        <EmptyPanel icon={Database} label="No cost records yet" />
-      ) : (
-        <>
-          <div className="hidden overflow-x-auto md:block">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-muted/50 text-[10px] uppercase tracking-wider text-muted-foreground">
-                <tr>
-                  <th className="px-4 py-3">Reference</th>
-                  <th className="px-4 py-3">Sale</th>
-                  <th className="px-4 py-3">Profit</th>
-                  <th className="px-4 py-3">Updated</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                {records.map((record) => (
-                  <tr key={record.id} className="hover:bg-muted/30">
-                    <td className="px-4 py-3 font-medium">
-                      {safeDisplay(record.referenceLabel || record.linkedOrderId || record.linkedRequestId, `Cost #${record.id}`)}
-                      <p className="mt-1 text-muted-foreground">{formatPercent(record.marginPercent)}</p>
-                    </td>
-                    <td className="px-4 py-3">{formatCurrency(record.saleTotal, record.currency)}</td>
-                    <td
-                      className={cn(
-                        "px-4 py-3 font-semibold",
-                        record.profit > 0 && "text-emerald-600 dark:text-emerald-400",
-                        record.profit < 0 && "text-red-600 dark:text-red-400",
-                      )}
-                    >
-                      {formatCurrency(record.profit, record.currency)}
-                    </td>
-                    <td className="px-4 py-3">{formatDate(record.updatedAt)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div className="grid gap-3 p-4 md:hidden">
-            {records.map((record) => (
-              <div key={record.id} className="rounded-md border p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="truncate font-semibold">
-                      {safeDisplay(record.referenceLabel || record.linkedOrderId || record.linkedRequestId, `Cost #${record.id}`)}
-                    </p>
-                    <p className="mt-1 text-xs text-muted-foreground">{formatDate(record.updatedAt)}</p>
-                  </div>
-                  <p
-                    className={cn(
-                      "shrink-0 font-semibold",
-                      record.profit > 0 && "text-emerald-600 dark:text-emerald-400",
-                      record.profit < 0 && "text-red-600 dark:text-red-400",
-                    )}
-                  >
-                    {formatCurrency(record.profit, record.currency)}
-                  </p>
-                </div>
-                <p className="mt-3 text-sm text-muted-foreground">
-                  Sale {formatCurrency(record.saleTotal, record.currency)} · Margin {formatPercent(record.marginPercent)}
-                </p>
-              </div>
-            ))}
-          </div>
-        </>
-      )}
+      <CardContent className="p-4">
+        {data.length === 0 ? <ChartEmpty label="No finance records yet" /> : <BarChart data={data} currency={currency} />}
+      </CardContent>
     </Card>
   );
 }
 
-function RecentOrders({ section }: { section: OverviewZappSection<DashboardOrder> }) {
+function ProfitTrendChart({ data, currency }: { data: OverviewFinanceTrendPoint[]; currency: string }) {
   return (
-    <Card className="overflow-hidden">
+    <Card>
+      <CardHeader className="border-b p-4">
+        <CardTitle>Profit Trend</CardTitle>
+      </CardHeader>
+      <CardContent className="p-4">
+        {data.length < 2 ? <ChartEmpty label="Need at least two finance dates" /> : <LineChart data={data} valueKey="profit" currency={currency} tone="profit" />}
+      </CardContent>
+    </Card>
+  );
+}
+
+function MarginTrendChart({ data }: { data: OverviewFinanceTrendPoint[] }) {
+  const marginData = data.filter((point) => point.marginPercent !== null);
+  return (
+    <Card>
+      <CardHeader className="border-b p-4">
+        <CardTitle>Margin Trend</CardTitle>
+      </CardHeader>
+      <CardContent className="p-4">
+        {marginData.length < 2 ? <ChartEmpty label="Need at least two margin points" /> : <LineChart data={marginData} valueKey="marginPercent" tone="margin" />}
+      </CardContent>
+    </Card>
+  );
+}
+
+function RequestConversionCard({ conversion }: { conversion: OverviewStatsResponse["zappApi"]["requestConversion"] }) {
+  const values = [
+    { label: "Quoted", value: conversion.quoted, color: "bg-sky-500" },
+    { label: "Approved/Paid", value: conversion.approvedPaid, color: "bg-emerald-500" },
+    { label: "Pending", value: conversion.pending, color: "bg-amber-500" },
+    { label: "Cancelled", value: conversion.cancelled, color: "bg-red-500" },
+  ];
+  return (
+    <Card>
       <CardHeader className="border-b p-4">
         <div className="flex items-center justify-between gap-3">
-          <CardTitle>Recent Orders</CardTitle>
-          <Badge variant={statusVariant(section.status)}>{section.status.replace(/_/g, " ")}</Badge>
+          <CardTitle>Request Conversion</CardTitle>
+          <Badge variant={conversion.available ? "success" : "warning"}>{conversion.available ? "Live" : "Unavailable"}</Badge>
         </div>
       </CardHeader>
-      {!section.available ? (
-        <UnavailablePanel message={section.message} />
-      ) : section.recent.length === 0 ? (
-        <EmptyPanel icon={ShoppingCart} label="No recent orders" />
-      ) : (
-        <div className="divide-y">
-          {section.recent.slice(0, 5).map((order) => (
-            <div key={order.id || order.orderName} className="flex items-start justify-between gap-4 p-4">
-              <div className="min-w-0">
-                <p className="truncate text-sm font-medium">{safeDisplay(order.orderName || order.orderNumber || order.id, "Order")}</p>
-                <p className="mt-1 truncate text-xs text-muted-foreground">
-                  {safeDisplay(order.id || order.customerName || order.customerEmail)}
-                </p>
-              </div>
-              <div className="shrink-0 text-right">
-                <p className="text-sm font-semibold">{formatCurrency(order.total, order.currency || "USD")}</p>
-                <p className="mt-1 text-xs text-muted-foreground">{formatDate(order.createdAt)}</p>
-              </div>
+      <CardContent className="space-y-4 p-4">
+        {!conversion.available ? (
+          <ChartEmpty label="ZAPP request data is unavailable" />
+        ) : (
+          <>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <SummaryTile label="Total requests" value={numberLabel(conversion.total)} />
+              <SummaryTile label="Conversion" value={formatPercent(conversion.conversionRate)} tone={conversion.conversionRate ? "success" : undefined} />
+              <SummaryTile label="Cancellation" value={formatPercent(conversion.cancellationRate)} tone={conversion.cancelled ? "danger" : undefined} />
+              <SummaryTile label="Sample size" value={numberLabel(conversion.sampleSize)} />
             </div>
-          ))}
-        </div>
-      )}
+            <SegmentBar total={Math.max(conversion.sampleSize, 1)} values={values} />
+            {conversion.countsMayBePartial ? (
+              <p className="text-xs text-muted-foreground">Conversion counts are based on the fetched live sample.</p>
+            ) : null}
+          </>
+        )}
+      </CardContent>
     </Card>
   );
 }
 
-function RecentRequests({ section }: { section: OverviewZappSection<DashboardRequest> }) {
+function StatusBreakdownCard<T>({ label, section }: { label: string; section: OverviewZappSection<T> }) {
   return (
-    <Card className="overflow-hidden">
+    <Card>
       <CardHeader className="border-b p-4">
         <div className="flex items-center justify-between gap-3">
-          <CardTitle>Recent Requests</CardTitle>
-          <Badge variant={statusVariant(section.status)}>{section.status.replace(/_/g, " ")}</Badge>
+          <CardTitle>{label}</CardTitle>
+          <Badge variant={section.available ? "success" : "warning"}>{section.available ? "Live" : "Unavailable"}</Badge>
         </div>
       </CardHeader>
-      {!section.available ? (
-        <UnavailablePanel message={section.message} />
-      ) : section.recent.length === 0 ? (
-        <EmptyPanel icon={FileText} label="No recent requests" />
-      ) : (
-        <div className="divide-y">
-          {section.recent.slice(0, 5).map((request) => (
-            <div key={request.id || request.requestNumber} className="flex items-start justify-between gap-4 p-4">
-              <div className="min-w-0">
-                <p className="truncate text-sm font-medium">
-                  {safeDisplay(request.requestNumber || request.reference || request.id, "Request")}
-                </p>
-                <p className="mt-1 truncate text-xs text-muted-foreground">
-                  {safeDisplay(request.id || request.customerName || request.customerEmail)}
-                </p>
-              </div>
-              <div className="shrink-0 text-right">
-                <p className="text-sm font-semibold">{formatCurrency(request.quotedTotal, request.currency || "MVR")}</p>
-                <p className="mt-1 text-xs text-muted-foreground">{formatDate(request.createdAt)}</p>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+      <CardContent className="p-4">
+        {!section.available || Object.keys(section.statusCounts).length === 0 ? (
+          <ChartEmpty label="No status data available" />
+        ) : (
+          <StatusBars counts={section.statusCounts} total={section.sampleSize || section.total || 0} />
+        )}
+      </CardContent>
     </Card>
   );
 }
 
-function RecentEmailLogs({ section }: { section: OverviewZappSection<DashboardEmailLog> }) {
-  return (
-    <Card className="overflow-hidden">
-      <CardHeader className="border-b p-4">
-        <div className="flex items-center justify-between gap-3">
-          <CardTitle>Recent Email Logs</CardTitle>
-          <div className="flex items-center gap-2">
-            <Badge variant={statusVariant(section.status)}>{section.status.replace(/_/g, " ")}</Badge>
-            <Button asChild size="sm" variant="outline">
-              <Link to="/email-logs">
-                Open
-                <ArrowUpRight className="h-4 w-4" />
-              </Link>
-            </Button>
-          </div>
-        </div>
-      </CardHeader>
-      {!section.available ? (
-        <UnavailablePanel message={section.message} />
-      ) : section.recent.length === 0 ? (
-        <EmptyPanel icon={MailCheck} label="No recent email logs" />
-      ) : (
-        <div className="divide-y">
-          {section.recent.slice(0, 6).map((log) => (
-            <div key={log.id || log.subject} className="flex items-start justify-between gap-4 p-4">
-              <div className="min-w-0">
-                <p className="truncate text-sm font-medium">
-                  {safeDisplay(log.subject || log.messageType, "Email")}
-                </p>
-                <p className="mt-1 truncate text-xs text-muted-foreground">
-                  {safeDisplay(log.toEmail)} · {safeDisplay(log.provider)}
-                </p>
-              </div>
-              <div className="shrink-0 text-right">
-                <Badge variant={statusVariant(log.status)}>{safeDisplay(log.status, "unknown")}</Badge>
-                <p className="mt-1 text-xs text-muted-foreground">{formatDate(log.createdAt)}</p>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </Card>
-  );
-}
+function BarChart({ data, currency }: { data: OverviewFinanceTrendPoint[]; currency: string }) {
+  const width = 640;
+  const height = 230;
+  const padding = 28;
+  const max = Math.max(...data.flatMap((point) => [point.revenue, point.costs]), 1);
+  const band = (width - padding * 2) / data.length;
+  const barWidth = Math.max(5, Math.min(16, band / 3));
 
-function EmptyPanel({ icon: Icon, label }: { icon: typeof Database; label: string }) {
   return (
-    <CardContent className="flex min-h-48 flex-col items-center justify-center gap-3 p-6 text-center">
-      <div className="flex h-11 w-11 items-center justify-center rounded-md bg-muted text-muted-foreground">
-        <Icon className="h-5 w-5" />
+    <div className="space-y-3">
+      <svg className="h-64 w-full overflow-visible" viewBox={`0 0 ${width} ${height}`} role="img">
+        <line className="text-border" stroke="currentColor" x1={padding} x2={width - padding} y1={height - padding} y2={height - padding} />
+        {data.map((point, index) => {
+          const x = padding + index * band + band / 2;
+          const revenueHeight = (point.revenue / max) * (height - padding * 2);
+          const costHeight = (point.costs / max) * (height - padding * 2);
+          return (
+            <g key={point.date}>
+              <rect className="fill-emerald-500/80" height={revenueHeight} rx="3" width={barWidth} x={x - barWidth - 2} y={height - padding - revenueHeight} />
+              <rect className="fill-sky-500/80" height={costHeight} rx="3" width={barWidth} x={x + 2} y={height - padding - costHeight} />
+              {index === 0 || index === data.length - 1 ? (
+                <text className="fill-muted-foreground text-[10px]" textAnchor="middle" x={x} y={height - 6}>
+                  {shortDate(point.date)}
+                </text>
+              ) : null}
+            </g>
+          );
+        })}
+      </svg>
+      <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground">
+        <span><span className="mr-1 inline-block h-2 w-2 rounded-sm bg-emerald-500" />Revenue</span>
+        <span><span className="mr-1 inline-block h-2 w-2 rounded-sm bg-sky-500" />Costs</span>
+        <span>Peak {formatCurrency(max, currency)}</span>
       </div>
+    </div>
+  );
+}
+
+function LineChart({
+  data,
+  valueKey,
+  currency,
+  tone,
+}: {
+  data: OverviewFinanceTrendPoint[];
+  valueKey: "profit" | "marginPercent";
+  currency?: string;
+  tone: "profit" | "margin";
+}) {
+  const width = 640;
+  const height = 230;
+  const padding = 28;
+  const values = data.map((point) => Number(point[valueKey] || 0));
+  const min = Math.min(...values, 0);
+  const max = Math.max(...values, 1);
+  const range = max - min || 1;
+  const xFor = (index: number) => padding + (index / Math.max(data.length - 1, 1)) * (width - padding * 2);
+  const yFor = (value: number) => height - padding - ((value - min) / range) * (height - padding * 2);
+  const points = values.map((value, index) => `${xFor(index)},${yFor(value)}`).join(" ");
+  const latest = values[values.length - 1];
+
+  return (
+    <div className="space-y-3">
+      <svg className="h-64 w-full overflow-visible" viewBox={`0 0 ${width} ${height}`} role="img">
+        <line className="text-border" stroke="currentColor" x1={padding} x2={width - padding} y1={height - padding} y2={height - padding} />
+        <polyline
+          className={tone === "profit" ? "text-emerald-500" : "text-primary"}
+          fill="none"
+          points={points}
+          stroke="currentColor"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth="3"
+        />
+        {values.map((value, index) => (
+          <circle key={`${data[index].date}-${value}`} className={tone === "profit" ? "fill-emerald-500" : "fill-primary"} cx={xFor(index)} cy={yFor(value)} r="3.5" />
+        ))}
+        <text className="fill-muted-foreground text-[10px]" textAnchor="start" x={padding} y={height - 6}>
+          {shortDate(data[0].date)}
+        </text>
+        <text className="fill-muted-foreground text-[10px]" textAnchor="end" x={width - padding} y={height - 6}>
+          {shortDate(data[data.length - 1].date)}
+        </text>
+      </svg>
+      <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+        <span>Range {valueKey === "marginPercent" ? `${min.toFixed(1)}% to ${max.toFixed(1)}%` : `${formatCurrency(min, currency)} to ${formatCurrency(max, currency)}`}</span>
+        <span className="font-medium text-foreground">Latest {valueKey === "marginPercent" ? `${latest.toFixed(2)}%` : formatCurrency(latest, currency)}</span>
+      </div>
+    </div>
+  );
+}
+
+function SegmentBar({ values, total }: { values: { label: string; value: number; color: string }[]; total: number }) {
+  return (
+    <div className="space-y-3">
+      <div className="flex h-3 overflow-hidden rounded-full bg-muted">
+        {values.map((item) => (
+          <div key={item.label} className={item.color} style={{ width: `${Math.max(0, (item.value / total) * 100)}%` }} />
+        ))}
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2">
+        {values.map((item) => (
+          <div key={item.label} className="flex items-center justify-between gap-3 rounded-md border p-2 text-sm">
+            <span className="flex items-center gap-2 text-muted-foreground">
+              <span className={cn("h-2 w-2 rounded-full", item.color)} />
+              {item.label}
+            </span>
+            <span className="font-medium">{numberLabel(item.value)}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function StatusBars({ counts, total }: { counts: Record<string, number>; total: number }) {
+  const entries = Object.entries(counts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 8);
+  const max = Math.max(...entries.map(([, value]) => value), 1);
+
+  return (
+    <div className="space-y-3">
+      {entries.map(([status, count]) => (
+        <div key={status} className="space-y-1">
+          <div className="flex items-center justify-between gap-3 text-sm">
+            <span className="capitalize text-muted-foreground">{status.replace(/_/g, " ")}</span>
+            <span className="font-medium">{count}</span>
+          </div>
+          <div className="h-2 overflow-hidden rounded-full bg-muted">
+            <div className="h-full rounded-full bg-primary" style={{ width: `${Math.max(4, (count / max) * 100)}%` }} />
+          </div>
+        </div>
+      ))}
+      <p className="text-xs text-muted-foreground">Sample total {numberLabel(total)}</p>
+    </div>
+  );
+}
+
+function ChartEmpty({ label }: { label: string }) {
+  return (
+    <div className="flex min-h-56 flex-col items-center justify-center gap-3 rounded-md border bg-muted/20 p-6 text-center">
+      <BarChart3 className="h-8 w-8 text-muted-foreground" />
       <p className="text-sm font-medium">{label}</p>
-    </CardContent>
-  );
-}
-
-function UnavailablePanel({ message }: { message: string | null }) {
-  return (
-    <CardContent className="flex min-h-48 flex-col items-center justify-center gap-3 p-6 text-center">
-      <div className="flex h-11 w-11 items-center justify-center rounded-md bg-orange-500/10 text-orange-600 dark:text-orange-400">
-        <AlertCircle className="h-5 w-5" />
-      </div>
-      <div>
-        <p className="text-sm font-medium">Unavailable</p>
-        <p className="mt-1 max-w-md text-sm text-muted-foreground">
-          {message || "ZAPP API data is not available."}
-        </p>
-      </div>
-    </CardContent>
+      <p className="max-w-sm text-xs text-muted-foreground">Charts appear automatically when enough dashboard data is available.</p>
+    </div>
   );
 }

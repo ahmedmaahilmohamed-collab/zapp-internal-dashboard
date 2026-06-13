@@ -363,6 +363,28 @@ export interface OverviewRecentCostRecord {
   updatedAt: string;
 }
 
+export interface OverviewFinanceTrendPoint {
+  date: string;
+  revenue: number;
+  costs: number;
+  profit: number;
+  marginPercent: number | null;
+  records: number;
+}
+
+export interface OverviewRequestConversion {
+  available: boolean;
+  total: number;
+  quoted: number;
+  approvedPaid: number;
+  cancelled: number;
+  pending: number;
+  conversionRate: number | null;
+  cancellationRate: number | null;
+  countsMayBePartial: boolean;
+  sampleSize: number;
+}
+
 export interface OverviewZappSection<T> {
   available: boolean;
   status: DiagnosticStatus | "not_configured";
@@ -375,6 +397,7 @@ export interface OverviewZappSection<T> {
   statusCounts: Record<string, number>;
   cancelledCount: number;
   countsMayBePartial: boolean;
+  sampleSize: number;
   message: string | null;
 }
 
@@ -390,6 +413,7 @@ export interface OverviewStatsResponse {
   configuration: OverviewConfigurationStats;
   access: OverviewAccessStats;
   recentCostRecords: OverviewRecentCostRecord[];
+  financeTrend: OverviewFinanceTrendPoint[];
   zappApiConfigured: boolean;
   zappApi: {
     configured: boolean;
@@ -399,6 +423,7 @@ export interface OverviewStatsResponse {
     orders: OverviewZappSection<DashboardOrder>;
     requests: OverviewZappSection<DashboardRequest>;
     emailLogs: OverviewZappSection<DashboardEmailLog>;
+    requestConversion: OverviewRequestConversion;
   };
 }
 

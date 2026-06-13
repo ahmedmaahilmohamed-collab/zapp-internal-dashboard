@@ -31,6 +31,7 @@ async def get_overview_stats(
     )
 
     checked_at = datetime.now(timezone.utc).isoformat()
+    zapp_api = await _zapp_api_stats(client, checked_at)
 
     return {
         "generatedAt": checked_at,
@@ -44,8 +45,9 @@ async def get_overview_stats(
         "configuration": _configuration_stats(db),
         "access": _access_stats(db, user),
         "recentCostRecords": _recent_cost_records(db),
+        "financeTrend": _finance_trend(db),
         "zappApiConfigured": client.is_configured,
-        "zappApi": await _zapp_api_stats(client, checked_at, include_email_log_recent=user.role == "admin"),
+        "zappApi": zapp_api,
     }
 
 
@@ -137,11 +139,50 @@ def _recent_cost_records(db: Session) -> list[dict[str, Any]]:
     ]
 
 
+def _finance_trend(db: Session) -> list[dict[str, Any]]:
+    records = db.scalars(
+        select(InternalCostRecord)
+        .order_by(InternalCostRecord.updated_at.desc(), InternalCostRecord.id.desc())
+        .limit(365)
+    ).all()
+    buckets: dict[str, dict[str, Decimal | int]] = {}
+
+    for record in sorted(records, key=lambda item: (item.updated_at, item.id)):
+        date_key = record.updated_at.date().isoformat()
+        bucket = buckets.setdefault(
+            date_key,
+            {
+                "revenue": Decimal("0"),
+                "costs": Decimal("0"),
+                "profit": Decimal("0"),
+                "records": 0,
+            },
+        )
+        bucket["revenue"] = Decimal(bucket["revenue"]) + Decimal(record.sale_total or 0)
+        bucket["costs"] = Decimal(bucket["costs"]) + Decimal(record.total_cost or 0)
+        bucket["profit"] = Decimal(bucket["profit"]) + Decimal(record.profit or 0)
+        bucket["records"] = int(bucket["records"]) + 1
+
+    points = []
+    for date_key, bucket in sorted(buckets.items())[-30:]:
+        revenue = Decimal(bucket["revenue"])
+        profit = Decimal(bucket["profit"])
+        points.append(
+            {
+                "date": date_key,
+                "revenue": _money(revenue),
+                "costs": _money(Decimal(bucket["costs"])),
+                "profit": _money(profit),
+                "marginPercent": _optional_number(None if revenue <= 0 else profit / revenue * Decimal("100")),
+                "records": int(bucket["records"]),
+            }
+        )
+    return points
+
+
 async def _zapp_api_stats(
     client: ZappApiClient,
     checked_at: str,
-    *,
-    include_email_log_recent: bool,
 ) -> dict[str, Any]:
     if not client.is_configured:
         return {
@@ -152,6 +193,7 @@ async def _zapp_api_stats(
             "orders": _unavailable_zapp_section("not_configured"),
             "requests": _unavailable_zapp_section("not_configured"),
             "emailLogs": _unavailable_zapp_section("not_configured"),
+            "requestConversion": _empty_request_conversion(False),
         }
 
     orders = await _fetch_zapp_section(
@@ -171,7 +213,7 @@ async def _zapp_api_stats(
         path="/api/internal/email-logs",
         collection_keys=("items", "logs"),
         normalizer=normalize_email_log,
-        include_recent=include_email_log_recent,
+        include_recent=False,
     )
 
     status = "success" if orders["available"] and requests["available"] and email_logs["available"] else "degraded"
@@ -183,6 +225,7 @@ async def _zapp_api_stats(
         "orders": orders,
         "requests": requests,
         "emailLogs": email_logs,
+        "requestConversion": requests.get("requestConversion") or _empty_request_conversion(False),
     }
 
 
@@ -216,15 +259,23 @@ async def _fetch_zapp_section(
 
     recent = normalized[:6] if include_recent else []
     status_counts = _status_counts(normalized)
+    total = int(meta.get("total") or len(normalized))
+    counts_may_be_partial = total > len(normalized)
     return {
         "available": True,
         "status": "success",
-        "total": int(meta.get("total") or len(normalized)),
+        "total": total,
         "recentCount": len(recent) if include_recent else 0,
         "recent": recent,
         "statusCounts": status_counts,
         "cancelledCount": status_counts.get("cancelled", 0) + status_counts.get("refunded", 0),
-        "countsMayBePartial": int(meta.get("total") or len(normalized)) > len(normalized),
+        "countsMayBePartial": counts_may_be_partial,
+        "sampleSize": len(normalized),
+        "requestConversion": _request_conversion_from_items(
+            normalized,
+            total=total,
+            counts_may_be_partial=counts_may_be_partial,
+        ) if "purchase-requests" in path else None,
         "upstreamStatus": meta.get("upstreamStatus"),
         "elapsedMs": meta.get("elapsedMs"),
         "responseKeys": meta.get("responseKeys", []),
@@ -242,11 +293,74 @@ def _unavailable_zapp_section(status: str) -> dict[str, Any]:
         "statusCounts": {},
         "cancelledCount": 0,
         "countsMayBePartial": False,
+        "sampleSize": 0,
         "upstreamStatus": None,
         "elapsedMs": None,
         "responseKeys": [],
         "message": None,
     }
+
+
+def _empty_request_conversion(available: bool) -> dict[str, Any]:
+    return {
+        "available": available,
+        "total": 0,
+        "quoted": 0,
+        "approvedPaid": 0,
+        "cancelled": 0,
+        "pending": 0,
+        "conversionRate": None,
+        "cancellationRate": None,
+        "countsMayBePartial": False,
+        "sampleSize": 0,
+    }
+
+
+def _request_conversion_from_items(
+    items: list[dict[str, Any]],
+    *,
+    total: int,
+    counts_may_be_partial: bool,
+) -> dict[str, Any]:
+    quoted = approved_paid = cancelled = pending = 0
+
+    for item in items:
+        status_text = _status_text(item)
+        quoted_total = Decimal(str(item.get("quotedTotal") or 0))
+        if quoted_total > 0 or item.get("quoteStatus"):
+            quoted += 1
+        if any(word in status_text for word in ("approved", "paid", "success", "complete")):
+            approved_paid += 1
+        if any(word in status_text for word in ("cancel", "refund", "reject")):
+            cancelled += 1
+        elif any(word in status_text for word in ("pending", "awaiting", "open", "draft", "new")) or not status_text:
+            pending += 1
+
+    denominator = total if total > 0 else 0
+    return {
+        "available": True,
+        "total": total,
+        "quoted": quoted,
+        "approvedPaid": approved_paid,
+        "cancelled": cancelled,
+        "pending": pending,
+        "conversionRate": _rate(approved_paid, denominator),
+        "cancellationRate": _rate(cancelled, denominator),
+        "countsMayBePartial": counts_may_be_partial,
+        "sampleSize": len(items),
+    }
+
+
+def _status_text(item: dict[str, Any]) -> str:
+    return " ".join(
+        str(value or "").lower()
+        for value in (
+            item.get("status"),
+            item.get("quoteStatus"),
+            item.get("paymentStatus"),
+            item.get("financialStatus"),
+        )
+    )
 
 
 def _summary_currency(currencies: list[str]) -> str:
@@ -271,6 +385,12 @@ def _status_counts(items: list[dict[str, Any]]) -> dict[str, int]:
             status = "unknown"
         counts[status] = counts.get(status, 0) + 1
     return counts
+
+
+def _rate(numerator: int, denominator: int) -> float | None:
+    if denominator <= 0:
+        return None
+    return float((Decimal(numerator) / Decimal(denominator) * Decimal("100")).quantize(Decimal("0.01")))
 
 
 def _money(value: Decimal | int | float | None) -> float:
