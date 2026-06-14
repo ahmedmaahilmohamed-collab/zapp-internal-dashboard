@@ -168,6 +168,60 @@ def delete_cost(
     return None
 
 
+@router.get("/cost-templates", response_model=list[schemas.CostTemplateRead])
+def get_cost_templates(
+    search: str | None = Query(default=None),
+    include_inactive: bool = Query(default=True),
+    _user=Depends(require_roles("admin", "manager")),
+    db: Session = Depends(get_db),
+):
+    return crud.list_cost_templates(db, search=search, include_inactive=include_inactive)
+
+
+@router.post("/cost-templates", response_model=schemas.CostTemplateRead, status_code=status.HTTP_201_CREATED)
+def post_cost_template(
+    payload: schemas.CostTemplateCreate,
+    _user=Depends(require_roles("admin", "manager")),
+    db: Session = Depends(get_db),
+):
+    try:
+        return crud.create_cost_template(db, payload)
+    except crud.DuplicateRecordError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.put("/cost-templates/{template_id}", response_model=schemas.CostTemplateRead)
+def put_cost_template(
+    template_id: int,
+    payload: schemas.CostTemplateUpdate,
+    _user=Depends(require_roles("admin", "manager")),
+    db: Session = Depends(get_db),
+):
+    try:
+        template = crud.update_cost_template(db, template_id, payload)
+    except crud.DuplicateRecordError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if template is None:
+        raise HTTPException(status_code=404, detail="Cost template not found.")
+    return template
+
+
+@router.delete("/cost-templates/{template_id}", response_model=schemas.CostTemplateRead)
+def delete_cost_template(
+    template_id: int,
+    _user=Depends(require_roles("admin", "manager")),
+    db: Session = Depends(get_db),
+):
+    template = crud.deactivate_cost_template(db, template_id)
+    if template is None:
+        raise HTTPException(status_code=404, detail="Cost template not found.")
+    return template
+
+
 @router.post("/pricing/calculate", response_model=schemas.PricingCalculateResponse)
 def calculate_pricing(
     payload: schemas.PricingCalculateRequest,

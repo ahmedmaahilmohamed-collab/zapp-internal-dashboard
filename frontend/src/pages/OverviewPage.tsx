@@ -171,7 +171,7 @@ export function OverviewPage() {
         <StatCard
           icon={FileText}
           label="Cost Records"
-          meta={`${stats.finance.profitableRecordsCount} profitable · ${stats.finance.lossRecordsCount} losses`}
+          meta={`${stats.finance.convertedRecordCount} converted · ${stats.finance.excludedRecordCount} excluded`}
           value={numberLabel(stats.finance.totalCostRecords)}
         />
         <StatCard
@@ -213,6 +213,20 @@ export function OverviewPage() {
         ) : null}
       </div>
 
+      {stats.finance.conversionWarnings.length ? (
+        <Card className="border-orange-500/30 bg-orange-500/5">
+          <CardContent className="flex items-start gap-3 p-4 text-sm text-orange-700 dark:text-orange-300">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+            <div>
+              <p className="font-medium">Some finance records are excluded from base-currency totals.</p>
+              <p className="mt-1 text-xs">{stats.finance.conversionWarnings.join(" ")}</p>
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      <DashboardWidgetsCard currency={financeCurrency} stats={stats} />
+
       <div className="grid gap-5 xl:grid-cols-[1.25fr_0.75fr]">
         <FinanceSummaryCard currency={financeCurrency} records={stats.recentCostRecords} stats={stats} />
         <ZappStatusCard stats={stats} />
@@ -230,6 +244,42 @@ export function OverviewPage() {
         <StatusBreakdownCard label="Request Status Breakdown" section={stats.zappApi.requests} />
       </div>
     </div>
+  );
+}
+
+function DashboardWidgetsCard({ stats, currency }: { stats: OverviewStatsResponse; currency: string }) {
+  const widgets = stats.dashboardWidgets;
+  return (
+    <Card>
+      <CardHeader className="border-b p-4">
+        <CardTitle>Executive Widgets</CardTitle>
+      </CardHeader>
+      <CardContent className="grid gap-4 p-4 lg:grid-cols-[0.8fr_1.2fr]">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <SummaryTile label="Revenue last 30 days" value={formatCurrency(widgets.revenueLast30Days, currency)} />
+          <SummaryTile label="Profit last 30 days" value={formatCurrency(widgets.profitLast30Days, currency)} tone={widgets.profitLast30Days >= 0 ? "success" : "danger"} />
+          <SummaryTile label="Requests this month" value={numberLabel(widgets.requestsThisMonth)} />
+          <SummaryTile label="Average order value" value={formatCurrency(widgets.averageOrderValue, currency)} />
+          <SummaryTile label="Average request value" value={formatCurrency(widgets.averageRequestValue, currency)} />
+          <SummaryTile label="Categories" value={widgets.topCategoriesAvailable ? String(widgets.topCategories.length) : "Unavailable"} />
+        </div>
+        <div className="rounded-md border bg-muted/20 p-4">
+          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Top Customers</p>
+          {widgets.topCustomers.length === 0 ? (
+            <p className="mt-4 text-sm text-muted-foreground">No customer revenue data yet.</p>
+          ) : (
+            <div className="mt-4 space-y-3">
+              {widgets.topCustomers.map((customer) => (
+                <div key={customer.customerName} className="flex items-center justify-between gap-3 text-sm">
+                  <span className="truncate text-muted-foreground">{customer.customerName}</span>
+                  <span className="font-medium">{formatCurrency(customer.revenueBase, currency)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 

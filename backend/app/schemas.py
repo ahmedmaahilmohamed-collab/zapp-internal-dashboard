@@ -220,6 +220,86 @@ class CostRead(CostBase):
     updated_at: datetime
 
 
+class CostTemplateBase(BaseModel):
+    name: str
+    description: str | None = None
+    default_bml_tax: NonNegativeMoney = Decimal("0")
+    default_import_tax: NonNegativeMoney = Decimal("0")
+    default_shipping_cost: NonNegativeMoney = Decimal("0")
+    default_additional_cost: NonNegativeMoney = Decimal("0")
+    default_margin_percent: Annotated[Decimal, Field(ge=0, lt=100)] = Decimal("0")
+    currency: str = "MVR"
+    is_active: bool = True
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        normalized = value.strip()
+        if len(normalized) < 2:
+            raise ValueError("Template name must be at least 2 characters.")
+        return normalized
+
+    @field_validator("currency")
+    @classmethod
+    def uppercase_currency(cls, value: str) -> str:
+        return value.strip().upper()
+
+    @field_validator("description")
+    @classmethod
+    def blank_description_to_none(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        normalized = value.strip()
+        return normalized or None
+
+
+class CostTemplateCreate(CostTemplateBase):
+    pass
+
+
+class CostTemplateUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    default_bml_tax: NonNegativeMoney | None = None
+    default_import_tax: NonNegativeMoney | None = None
+    default_shipping_cost: NonNegativeMoney | None = None
+    default_additional_cost: NonNegativeMoney | None = None
+    default_margin_percent: Annotated[Decimal, Field(ge=0, lt=100)] | None = None
+    currency: str | None = None
+    is_active: bool | None = None
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        normalized = value.strip()
+        if len(normalized) < 2:
+            raise ValueError("Template name must be at least 2 characters.")
+        return normalized
+
+    @field_validator("currency")
+    @classmethod
+    def uppercase_currency(cls, value: str | None) -> str | None:
+        return value.strip().upper() if value is not None else value
+
+    @field_validator("description")
+    @classmethod
+    def blank_description_to_none(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        normalized = value.strip()
+        return normalized or None
+
+
+class CostTemplateRead(CostTemplateBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    created_at: datetime
+    updated_at: datetime
+
+
 class PricingCalculateRequest(BaseModel):
     item_cost: NonNegativeMoney
     source_currency: str

@@ -213,6 +213,53 @@ def delete_cost(db: Session, cost_id: int):
     return cost
 
 
+def list_cost_templates(db: Session, search: str | None = None, include_inactive: bool = True):
+    statement: Select = select(models.CostTemplate).order_by(
+        models.CostTemplate.is_active.desc(),
+        models.CostTemplate.name.asc(),
+    )
+    if search:
+        pattern = f"%{search.strip()}%"
+        statement = statement.where(
+            or_(
+                models.CostTemplate.name.ilike(pattern),
+                models.CostTemplate.description.ilike(pattern),
+                models.CostTemplate.currency.ilike(pattern),
+            )
+        )
+    if not include_inactive:
+        statement = statement.where(models.CostTemplate.is_active.is_(True))
+    return db.scalars(statement).all()
+
+
+def create_cost_template(db: Session, payload: schemas.CostTemplateCreate):
+    if _find_active_currency(db, payload.currency) is None:
+        raise ValueError("Template currency was not found or is inactive.")
+    template = models.CostTemplate(**payload.model_dump())
+    db.add(template)
+    return _commit_refresh(db, template)
+
+
+def update_cost_template(db: Session, template_id: int, payload: schemas.CostTemplateUpdate):
+    template = db.get(models.CostTemplate, template_id)
+    if template is None:
+        return None
+    updates = payload.model_dump(exclude_unset=True)
+    if updates.get("currency") and _find_active_currency(db, updates["currency"]) is None:
+        raise ValueError("Template currency was not found or is inactive.")
+    for key, value in updates.items():
+        setattr(template, key, value)
+    return _commit_refresh(db, template)
+
+
+def deactivate_cost_template(db: Session, template_id: int):
+    template = db.get(models.CostTemplate, template_id)
+    if template is None:
+        return None
+    template.is_active = False
+    return _commit_refresh(db, template)
+
+
 def calculate_pricing(db: Session, payload: schemas.PricingCalculateRequest):
     source_currency = _find_active_currency(db, payload.source_currency)
     target_currency = _find_active_currency(db, payload.target_currency)
@@ -360,6 +407,59 @@ def _find_active_currency(db: Session, code: str):
             models.Currency.is_active.is_(True),
         )
     )
+
+
+def build_currency_conversion_context(db: Session) -> dict:
+    currencies = {
+        currency.code: currency
+        for currency in db.scalars(select(models.Currency).where(models.Currency.is_active.is_(True))).all()
+        if currency.code
+    }
+    base_currency = next((currency for currency in currencies.values() if currency.is_base), None)
+    if base_currency is None and currencies:
+        base_currency = sorted(currencies.values(), key=lambda item: item.code)[0]
+    return {
+        "baseCurrency": base_currency.code if base_currency else "MVR",
+        "hasBaseCurrency": base_currency is not None,
+        "rates": {
+            code: Decimal(currency.exchange_rate_to_base)
+            for code, currency in currencies.items()
+        },
+    }
+
+
+def convert_amount_to_base(amount: Decimal | int | float | None, currency: str | None, context: dict):
+    code = (currency or "").strip().upper()
+    if not context.get("hasBaseCurrency"):
+        return None, "No active base currency is configured."
+    rate = context.get("rates", {}).get(code)
+    if rate is None:
+        return None, f"Missing active exchange rate for {code or 'unknown currency'}."
+    return _money(Decimal(amount or 0) * rate), None
+
+
+def cost_record_base_values(record: models.InternalCostRecord, context: dict):
+    sale_total, sale_warning = convert_amount_to_base(record.sale_total, record.currency, context)
+    total_cost, cost_warning = convert_amount_to_base(record.total_cost, record.currency, context)
+    profit, profit_warning = convert_amount_to_base(record.profit, record.currency, context)
+    warnings = sorted({warning for warning in (sale_warning, cost_warning, profit_warning) if warning})
+    if sale_total is None or total_cost is None or profit is None:
+        return {
+            "converted": False,
+            "saleTotalBase": None,
+            "totalCostBase": None,
+            "profitBase": None,
+            "marginPercent": None,
+            "warnings": warnings,
+        }
+    return {
+        "converted": True,
+        "saleTotalBase": sale_total,
+        "totalCostBase": total_cost,
+        "profitBase": profit,
+        "marginPercent": None if sale_total <= 0 else (profit / sale_total * Decimal("100")).quantize(Decimal("0.01")),
+        "warnings": warnings,
+    }
 
 
 def _find_overlapping_shipping_rate(

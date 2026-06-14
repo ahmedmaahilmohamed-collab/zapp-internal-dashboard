@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card"
 import {
   CostPayload,
   CostRecord,
+  CostTemplateRecord,
   CurrencyPayload,
   CurrencyRecord,
   DashboardOrder,
@@ -20,6 +21,7 @@ import {
   deleteCurrency,
   deleteShippingRate,
   fetchCosts,
+  fetchCostTemplates,
   fetchCurrencies,
   fetchOrders,
   fetchRequests,
@@ -810,7 +812,8 @@ const costComponentFields = [
 ] as const;
 
 type CostComponentKey = (typeof costComponentFields)[number]["key"];
-type CostForm = Record<CostComponentKey | "sale_total", string> & {
+type CostForm = Record<CostComponentKey | "sale_total" | "target_margin_percent", string> & {
+  template_id: string;
   source_type: "order" | "request" | "manual";
   source_id: string;
   linked_order_id: string;
@@ -824,6 +827,7 @@ type CostForm = Record<CostComponentKey | "sale_total", string> & {
 };
 
 const blankCost: CostForm = {
+  template_id: "",
   source_type: "manual",
   source_id: "",
   linked_order_id: "",
@@ -838,6 +842,7 @@ const blankCost: CostForm = {
   shipping_cost: "0",
   additional_cost: "0",
   sale_total: "0",
+  target_margin_percent: "",
   currency: "MVR",
   notes: "",
 };
@@ -873,6 +878,7 @@ export function CostsPage() {
   const { notify } = useToast();
   const [records, setRecords] = useState<CostRecord[]>([]);
   const [currencies, setCurrencies] = useState<CurrencyRecord[]>([]);
+  const [templates, setTemplates] = useState<CostTemplateRecord[]>([]);
   const [filters, setFilters] = useState({ search: "", currency: "" });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -891,12 +897,14 @@ export function CostsPage() {
     setLoading(true);
     setError("");
     try {
-      const [costRecords, activeCurrencies] = await Promise.all([
+      const [costRecords, activeCurrencies, activeTemplates] = await Promise.all([
         fetchCosts(filters),
         fetchCurrencies({ includeInactive: false }),
+        fetchCostTemplates({ includeInactive: false }),
       ]);
       setRecords(costRecords);
       setCurrencies(activeCurrencies);
+      setTemplates(activeTemplates);
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : "Unable to load cost records.";
       setError(message);
@@ -919,6 +927,25 @@ export function CostsPage() {
     return currencies.some((currency) => currency.code === code && currency.is_active)
       ? String(code)
       : baseCurrencyCode(currencies);
+  }
+
+  function applyCostTemplate(templateId: string) {
+    const template = templates.find((item) => String(item.id) === templateId);
+    setForm((current) => {
+      if (!template) {
+        return { ...current, template_id: templateId };
+      }
+      return {
+        ...current,
+        template_id: templateId,
+        bml_tax: String(template.default_bml_tax),
+        import_tax: String(template.default_import_tax),
+        shipping_cost: String(template.default_shipping_cost),
+        additional_cost: String(template.default_additional_cost),
+        target_margin_percent: String(template.default_margin_percent),
+        currency: activeCurrencyOrBase(template.currency),
+      };
+    });
   }
 
   async function loadLinkOptions() {
@@ -951,6 +978,7 @@ export function CostsPage() {
     const sourceType = record.source_type || (record.linked_order_id ? "order" : record.linked_request_id ? "request" : "manual");
     setEditing(record);
     setForm({
+      template_id: "",
       source_type: sourceType,
       source_id: recordSourceId(record),
       linked_order_id: record.linked_order_id || "",
@@ -971,6 +999,7 @@ export function CostsPage() {
           Number(record.packaging_cost || 0) + Number(record.other_cost || 0),
       ),
       sale_total: String(record.sale_total || 0),
+      target_margin_percent: record.margin_percent === null ? "" : String(record.margin_percent),
       currency: activeCurrencyOrBase(record.currency),
       notes: record.notes || "",
     });
@@ -1279,6 +1308,21 @@ export function CostsPage() {
                   <Button type="button" variant="outline" onClick={() => setFormStep("link")}>Back to ZAPP link</Button>
                 </div>
               ) : null}
+              <div className="sm:col-span-2">
+                <Field label="Cost Template">
+                  <select className={inputClass} value={form.template_id} onChange={(event) => applyCostTemplate(event.target.value)}>
+                    <option value="">No template</option>
+                    {templates.map((template) => (
+                      <option key={template.id} value={template.id}>
+                        {template.name} ({template.currency})
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Selecting a template fills BML/payment tax, import tax, shipping, additional cost, and currency. You can still override every field.
+                </p>
+              </div>
               <Field label="Source Type">
                 <select className={inputClass} value={form.source_type} onChange={(event) => setForm({ ...form, source_type: event.target.value as CostForm["source_type"] })}>
                   <option value="order">Shopify Order</option>
@@ -1292,6 +1336,9 @@ export function CostsPage() {
               <Field label="Title"><input className={inputClass} value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} /></Field>
               <Field label="Supplier"><input className={inputClass} value={form.supplier_name} onChange={(event) => setForm({ ...form, supplier_name: event.target.value })} /></Field>
               <Field label="Revenue"><input required min="0" step="0.01" type="number" className={inputClass} value={form.sale_total} onChange={(event) => setForm({ ...form, sale_total: event.target.value })} /></Field>
+              <Field label="Target Margin %">
+                <input min="0" max="99" step="0.01" type="number" className={inputClass} value={form.target_margin_percent} onChange={(event) => setForm({ ...form, target_margin_percent: event.target.value })} />
+              </Field>
               <Field label="Currency">
                 <CurrencySelect
                   currencies={currencies}

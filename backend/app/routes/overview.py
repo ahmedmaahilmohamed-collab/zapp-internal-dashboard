@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import distinct, func, select
 from sqlalchemy.orm import Session
 
+from .. import crud
 from ..config import get_settings
 from ..database import get_db
 from ..models import Currency, InternalCostRecord, ShippingRateCard, UserAccess
@@ -46,17 +47,33 @@ async def get_overview_stats(
         "access": _access_stats(db, user),
         "recentCostRecords": _recent_cost_records(db),
         "financeTrend": _finance_trend(db),
+        "dashboardWidgets": _dashboard_widgets(db, zapp_api),
         "zappApiConfigured": client.is_configured,
         "zappApi": zapp_api,
     }
 
 
 def _finance_stats(db: Session) -> dict[str, Any]:
-    total_records = db.scalar(select(func.count(InternalCostRecord.id))) or 0
-    total_sale_value = db.scalar(select(func.coalesce(func.sum(InternalCostRecord.sale_total), 0))) or Decimal("0")
-    total_cost_value = db.scalar(select(func.coalesce(func.sum(InternalCostRecord.total_cost), 0))) or Decimal("0")
-    total_profit = db.scalar(select(func.coalesce(func.sum(InternalCostRecord.profit), 0))) or Decimal("0")
-    average_margin_percent = db.scalar(select(func.avg(InternalCostRecord.margin_percent)))
+    records = db.scalars(select(InternalCostRecord)).all()
+    total_records = len(records)
+    context = crud.build_currency_conversion_context(db)
+    total_sale_value = Decimal("0")
+    total_cost_value = Decimal("0")
+    total_profit = Decimal("0")
+    converted_count = 0
+    warnings: set[str] = set()
+
+    for record in records:
+        values = crud.cost_record_base_values(record, context)
+        warnings.update(values["warnings"])
+        if not values["converted"]:
+            continue
+        converted_count += 1
+        total_sale_value += Decimal(values["saleTotalBase"] or 0)
+        total_cost_value += Decimal(values["totalCostBase"] or 0)
+        total_profit += Decimal(values["profitBase"] or 0)
+
+    average_margin_percent = None if total_sale_value <= 0 else total_profit / total_sale_value * Decimal("100")
     profitable_records_count = (
         db.scalar(select(func.count(InternalCostRecord.id)).where(InternalCostRecord.profit > 0)) or 0
     )
@@ -69,14 +86,9 @@ def _finance_stats(db: Session) -> dict[str, Any]:
     linked_requests_count = (
         db.scalar(select(func.count(InternalCostRecord.id)).where(InternalCostRecord.linked_request_id.is_not(None))) or 0
     )
-    currencies = [
-        value
-        for value in db.scalars(select(distinct(InternalCostRecord.currency))).all()
-        if value
-    ]
 
     return {
-        "currency": _summary_currency(currencies),
+        "currency": context["baseCurrency"],
         "totalCostRecords": int(total_records),
         "totalSaleValue": _money(total_sale_value),
         "totalCostValue": _money(total_cost_value),
@@ -86,6 +98,9 @@ def _finance_stats(db: Session) -> dict[str, Any]:
         "lossRecordsCount": int(loss_records_count),
         "linkedOrdersCount": int(linked_orders_count),
         "linkedRequestsCount": int(linked_requests_count),
+        "convertedRecordCount": int(converted_count),
+        "excludedRecordCount": int(total_records - converted_count),
+        "conversionWarnings": sorted(warnings),
         "scope": "local_finance",
     }
 
@@ -145,9 +160,13 @@ def _finance_trend(db: Session) -> list[dict[str, Any]]:
         .order_by(InternalCostRecord.updated_at.desc(), InternalCostRecord.id.desc())
         .limit(365)
     ).all()
+    context = crud.build_currency_conversion_context(db)
     buckets: dict[str, dict[str, Decimal | int]] = {}
 
     for record in sorted(records, key=lambda item: (item.updated_at, item.id)):
+        values = crud.cost_record_base_values(record, context)
+        if not values["converted"]:
+            continue
         date_key = record.updated_at.date().isoformat()
         bucket = buckets.setdefault(
             date_key,
@@ -158,9 +177,9 @@ def _finance_trend(db: Session) -> list[dict[str, Any]]:
                 "records": 0,
             },
         )
-        bucket["revenue"] = Decimal(bucket["revenue"]) + Decimal(record.sale_total or 0)
-        bucket["costs"] = Decimal(bucket["costs"]) + Decimal(record.total_cost or 0)
-        bucket["profit"] = Decimal(bucket["profit"]) + Decimal(record.profit or 0)
+        bucket["revenue"] = Decimal(bucket["revenue"]) + Decimal(values["saleTotalBase"] or 0)
+        bucket["costs"] = Decimal(bucket["costs"]) + Decimal(values["totalCostBase"] or 0)
+        bucket["profit"] = Decimal(bucket["profit"]) + Decimal(values["profitBase"] or 0)
         bucket["records"] = int(bucket["records"]) + 1
 
     points = []
@@ -178,6 +197,41 @@ def _finance_trend(db: Session) -> list[dict[str, Any]]:
             }
         )
     return points
+
+
+def _dashboard_widgets(db: Session, zapp_api: dict[str, Any]) -> dict[str, Any]:
+    records = db.scalars(select(InternalCostRecord)).all()
+    context = crud.build_currency_conversion_context(db)
+    customer_totals: dict[str, Decimal] = {}
+    revenue_last_30 = Decimal("0")
+    profit_last_30 = Decimal("0")
+    latest_dates = sorted((record.updated_at.date() for record in records), reverse=True)
+    cutoff = latest_dates[0] if latest_dates else None
+
+    for record in records:
+        values = crud.cost_record_base_values(record, context)
+        if not values["converted"]:
+            continue
+        customer = (record.customer_name or "Unknown customer").strip() or "Unknown customer"
+        customer_totals[customer] = customer_totals.get(customer, Decimal("0")) + Decimal(values["saleTotalBase"] or 0)
+        if cutoff and (cutoff - record.updated_at.date()).days <= 30:
+            revenue_last_30 += Decimal(values["saleTotalBase"] or 0)
+            profit_last_30 += Decimal(values["profitBase"] or 0)
+
+    return {
+        "baseCurrency": context["baseCurrency"],
+        "revenueLast30Days": _money(revenue_last_30),
+        "profitLast30Days": _money(profit_last_30),
+        "requestsThisMonth": _requests_this_month(zapp_api),
+        "averageOrderValue": _average_live_value(zapp_api.get("orders"), "total", context),
+        "averageRequestValue": _average_live_value(zapp_api.get("requests"), "quotedTotal", context),
+        "topCustomers": [
+            {"customerName": name, "revenueBase": _money(value)}
+            for name, value in sorted(customer_totals.items(), key=lambda item: item[1], reverse=True)[:5]
+        ],
+        "topCategories": [],
+        "topCategoriesAvailable": False,
+    }
 
 
 async def _zapp_api_stats(
@@ -349,6 +403,32 @@ def _request_conversion_from_items(
         "countsMayBePartial": counts_may_be_partial,
         "sampleSize": len(items),
     }
+
+
+def _requests_this_month(zapp_api: dict[str, Any]) -> int | None:
+    requests = zapp_api.get("requests") or {}
+    if not requests.get("available"):
+        return None
+    current_month = datetime.now(timezone.utc).strftime("%Y-%m")
+    recent = requests.get("recent") or []
+    return sum(1 for item in recent if str(item.get("createdAt") or "").startswith(current_month))
+
+
+def _average_live_value(section: dict[str, Any] | None, amount_key: str, context: dict) -> float | None:
+    if not section or not section.get("available"):
+        return None
+    recent = section.get("recent") or []
+    values = []
+    for item in recent:
+        if item.get(amount_key) is None:
+            continue
+        converted, warning = crud.convert_amount_to_base(item.get(amount_key), item.get("currency"), context)
+        if warning:
+            continue
+        values.append(Decimal(converted or 0))
+    if not values:
+        return None
+    return _money(sum(values) / Decimal(len(values)))
 
 
 def _status_text(item: dict[str, Any]) -> str:

@@ -6,7 +6,7 @@ from fastapi.responses import JSONResponse
 from .config import get_settings
 from .database import engine
 from .observability import RequestContextMiddleware, log_event, setup_logging
-from .routes import api, auth, diagnostics, finance, health, overview
+from .routes import api, auth, diagnostics, finance, health, notifications, overview, reports
 from .zapp_client import ZappApiClient
 
 setup_logging()
@@ -32,6 +32,8 @@ app.include_router(diagnostics.router)
 app.include_router(api.router)
 app.include_router(finance.router)
 app.include_router(overview.router)
+app.include_router(reports.router)
+app.include_router(notifications.router)
 
 
 @app.on_event("startup")

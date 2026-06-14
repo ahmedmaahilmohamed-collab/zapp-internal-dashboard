@@ -91,6 +91,41 @@ export interface DashboardCollectionResponse<T> {
   upstreamStatus?: number | null;
 }
 
+export interface LinkedCostSummary {
+  id: number;
+  sourceType: string;
+  sourceId: string | null;
+  linkedOrderId: string | null;
+  linkedRequestId: string | null;
+  referenceLabel: string | null;
+  customerName: string | null;
+  title: string | null;
+  saleTotal: number;
+  totalCost: number;
+  profit: number;
+  marginPercent: number | null;
+  currency: string;
+  saleTotalBase: number | null;
+  totalCostBase: number | null;
+  profitBase: number | null;
+  updatedAt: string;
+}
+
+export interface FinanceSummary {
+  hasCostRecord: boolean;
+  costRecordCount: number;
+  convertedRecordCount: number;
+  excludedRecordCount: number;
+  totalSaleValueBase: number;
+  totalCostValueBase: number;
+  totalProfitBase: number;
+  marginPercent: number | null;
+  missingCostRecord: boolean;
+  baseCurrency: string;
+  conversionWarnings: string[];
+  costRecords: LinkedCostSummary[];
+}
+
 export interface DashboardOrder {
   id: string;
   orderName: string;
@@ -110,6 +145,7 @@ export interface DashboardOrder {
   receiptStatus: string;
   deliveryStatus: string;
   trackingNumber: string;
+  financeSummary?: FinanceSummary;
   source: {
     sourceId: string;
     availableFields: string[];
@@ -140,6 +176,7 @@ export interface DashboardRequest {
   receiptStatus: string;
   quoteMvr: string;
   quoteUsd: string;
+  financeSummary?: FinanceSummary;
   source: {
     sourceId: string;
     availableFields: string[];
@@ -278,6 +315,23 @@ export type CostPayload = {
   notes?: string | null;
 };
 
+export interface CostTemplateRecord {
+  id: number;
+  name: string;
+  description: string | null;
+  default_bml_tax: number;
+  default_import_tax: number;
+  default_shipping_cost: number;
+  default_additional_cost: number;
+  default_margin_percent: number;
+  currency: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export type CostTemplatePayload = Omit<CostTemplateRecord, "id" | "created_at" | "updated_at">;
+
 export interface PricingCalculatePayload {
   item_cost: number;
   source_currency: string;
@@ -337,6 +391,9 @@ export interface OverviewFinanceStats {
   lossRecordsCount: number;
   linkedOrdersCount: number;
   linkedRequestsCount: number;
+  convertedRecordCount: number;
+  excludedRecordCount: number;
+  conversionWarnings: string[];
   scope: string;
 }
 
@@ -414,6 +471,17 @@ export interface OverviewStatsResponse {
   access: OverviewAccessStats;
   recentCostRecords: OverviewRecentCostRecord[];
   financeTrend: OverviewFinanceTrendPoint[];
+  dashboardWidgets: {
+    baseCurrency: string;
+    revenueLast30Days: number;
+    profitLast30Days: number;
+    requestsThisMonth: number | null;
+    averageOrderValue: number | null;
+    averageRequestValue: number | null;
+    topCustomers: { customerName: string; revenueBase: number }[];
+    topCategories: { label: string; revenueBase: number }[];
+    topCategoriesAvailable: boolean;
+  };
   zappApiConfigured: boolean;
   zappApi: {
     configured: boolean;
@@ -425,6 +493,82 @@ export interface OverviewStatsResponse {
     emailLogs: OverviewZappSection<DashboardEmailLog>;
     requestConversion: OverviewRequestConversion;
   };
+}
+
+export interface FinanceReportResponse {
+  generatedAt: string;
+  dateFrom: string | null;
+  dateTo: string | null;
+  groupBy: "month";
+  baseCurrency: string;
+  convertedRecordCount: number;
+  excludedRecordCount: number;
+  conversionWarnings: { message: string; recordIds: number[]; recordCount: number }[];
+  summary: {
+    recordCount: number;
+    revenue: number;
+    costs: number;
+    profit: number;
+    marginPercent: number | null;
+  };
+  monthlyPnL: {
+    month: string;
+    revenue: number;
+    costs: number;
+    profit: number;
+    marginPercent: number | null;
+    recordCount: number;
+  }[];
+  categoryBreakdown: {
+    key: string;
+    label: string;
+    amount: number;
+    percentOfTotalCost: number | null;
+  }[];
+  leaderboards: {
+    bestProfit: ReportLeaderboardRecord[];
+    worstProfit: ReportLeaderboardRecord[];
+    bestMargin: ReportLeaderboardRecord[];
+    worstMargin: ReportLeaderboardRecord[];
+  };
+  expectedVsActual: {
+    available: boolean;
+    message: string;
+  };
+}
+
+export interface ReportLeaderboardRecord {
+  id: number;
+  sourceType: string;
+  sourceId: string | null;
+  linkedOrderId: string | null;
+  linkedRequestId: string | null;
+  referenceLabel: string | null;
+  customerName: string | null;
+  title: string | null;
+  revenueBase: number;
+  costsBase: number;
+  profitBase: number;
+  marginPercent: number | null;
+  currency: string;
+  updatedAt: string;
+}
+
+export interface DashboardNotification {
+  id: string;
+  type: string;
+  severity: "info" | "warning" | "error" | "success";
+  title: string;
+  message: string;
+  href: string;
+  createdAt: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface NotificationResponse {
+  generatedAt: string;
+  unreadCount: number;
+  items: DashboardNotification[];
 }
 
 export class ApiClientError extends Error {
@@ -649,6 +793,35 @@ export async function deleteCost(id: number) {
   });
 }
 
+export async function fetchCostTemplates(query: { search?: string; includeInactive?: boolean } = {}) {
+  const params = new URLSearchParams();
+  if (query.search?.trim()) {
+    params.set("search", query.search.trim());
+  }
+  params.set("include_inactive", String(query.includeInactive ?? true));
+  return apiRequest<CostTemplateRecord[]>(`/api/cost-templates?${params.toString()}`);
+}
+
+export async function createCostTemplate(payload: CostTemplatePayload) {
+  return apiRequest<CostTemplateRecord>("/api/cost-templates", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateCostTemplate(id: number, payload: Partial<CostTemplatePayload>) {
+  return apiRequest<CostTemplateRecord>(`/api/cost-templates/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteCostTemplate(id: number) {
+  return apiRequest<CostTemplateRecord>(`/api/cost-templates/${id}`, {
+    method: "DELETE",
+  });
+}
+
 export async function calculatePricing(payload: PricingCalculatePayload) {
   return apiRequest<PricingCalculateResult>("/api/pricing/calculate", {
     method: "POST",
@@ -658,6 +831,22 @@ export async function calculatePricing(payload: PricingCalculatePayload) {
 
 export async function fetchOverviewStats(): Promise<OverviewStatsResponse> {
   return apiRequest<OverviewStatsResponse>("/api/overview/stats");
+}
+
+export async function fetchFinanceReport(query: { dateFrom?: string; dateTo?: string } = {}) {
+  const params = new URLSearchParams();
+  if (query.dateFrom) {
+    params.set("date_from", query.dateFrom);
+  }
+  if (query.dateTo) {
+    params.set("date_to", query.dateTo);
+  }
+  params.set("group_by", "month");
+  return apiRequest<FinanceReportResponse>(`/api/reports/finance?${params.toString()}`);
+}
+
+export async function fetchNotifications() {
+  return apiRequest<NotificationResponse>("/api/notifications");
 }
 
 async function fetchCollection<T>(

@@ -6,11 +6,13 @@ import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import {
   CostPayload,
+  CostTemplateRecord,
   CurrencyRecord,
   PricingCalculatePayload,
   PricingCalculateResult,
   calculatePricing,
   createCost,
+  fetchCostTemplates,
   fetchCurrencies,
 } from "../lib/api";
 import { useAuth } from "../lib/auth-context";
@@ -31,6 +33,7 @@ const blankForm = {
   destination_country: "Maldives",
   desired_margin_percent: "25",
   payment_fee_percent: "3",
+  template_bml_tax: "0",
   customs_cost: "0",
   local_delivery_cost: "0",
   packaging_cost: "0",
@@ -72,6 +75,8 @@ export function CalculatorPage() {
   const { canManageFinance } = useAuth();
   const { notify } = useToast();
   const [currencies, setCurrencies] = useState<CurrencyRecord[]>([]);
+  const [templates, setTemplates] = useState<CostTemplateRecord[]>([]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState("");
   const [form, setForm] = useState(blankForm);
   const [result, setResult] = useState<PricingCalculateResult | null>(null);
   const [loading, setLoading] = useState(false);
@@ -79,19 +84,24 @@ export function CalculatorPage() {
   const [error, setError] = useState("");
   const [saveMessage, setSaveMessage] = useState("");
 
-  const loadCurrencies = useCallback(async () => {
+  const loadSetup = useCallback(async () => {
     try {
-      setCurrencies(await fetchCurrencies({ includeInactive: false }));
+      const [activeCurrencies, activeTemplates] = await Promise.all([
+        fetchCurrencies({ includeInactive: false }),
+        fetchCostTemplates({ includeInactive: false }),
+      ]);
+      setCurrencies(activeCurrencies);
+      setTemplates(activeTemplates);
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : "Unable to load currencies.";
+      const message = caught instanceof Error ? caught.message : "Unable to load calculator setup.";
       setError(message);
       notify(message, "error");
     }
   }, [notify]);
 
   useEffect(() => {
-    void loadCurrencies();
-  }, [loadCurrencies]);
+    void loadSetup();
+  }, [loadSetup]);
 
   const activeCodes = useMemo(() => {
     const codes = currencies.map((currency) => currency.code);
@@ -100,6 +110,24 @@ export function CalculatorPage() {
 
   function updateField(key: keyof typeof blankForm, value: string) {
     setForm((current) => ({ ...current, [key]: value }));
+    setSaveMessage("");
+  }
+
+  function applyTemplate(templateId: string) {
+    setSelectedTemplateId(templateId);
+    const template = templates.find((item) => String(item.id) === templateId);
+    if (!template) {
+      return;
+    }
+    setForm((current) => ({
+      ...current,
+      target_currency: activeCodes.includes(template.currency) ? template.currency : current.target_currency,
+      desired_margin_percent: String(template.default_margin_percent),
+      template_bml_tax: String(template.default_bml_tax),
+      customs_cost: String(template.default_import_tax),
+      local_delivery_cost: String(template.default_shipping_cost),
+      other_cost: String(template.default_additional_cost),
+    }));
     setSaveMessage("");
   }
 
@@ -160,7 +188,7 @@ export function CalculatorPage() {
         `Calculator estimate: ${form.origin_country} to ${form.destination_country}`,
       title: "Pricing calculator estimate",
       product_purchase_cost: toNumber(result.converted_item_cost),
-      bml_tax: toNumber(result.payment_fee),
+      bml_tax: toNumber(result.payment_fee) + numberFrom(form.template_bml_tax),
       import_tax: toNumber(result.customs_cost),
       shipping_cost:
         toNumber(result.international_shipping_cost) + toNumber(result.local_delivery_cost),
@@ -194,7 +222,7 @@ export function CalculatorPage() {
             Estimate landed cost, sale price, and margin from currencies and shipping rates.
           </p>
         </div>
-        <Button variant="outline" onClick={loadCurrencies}>
+        <Button variant="outline" onClick={loadSetup}>
           <RefreshCcw className="h-4 w-4" />
           Refresh rates
         </Button>
@@ -221,6 +249,21 @@ export function CalculatorPage() {
           </CardHeader>
           <CardContent className="p-4">
             <form className="grid gap-4 sm:grid-cols-2" onSubmit={submit}>
+              <div className="sm:col-span-2">
+                <Field label="Cost template">
+                  <select className={inputClass} value={selectedTemplateId} onChange={(event) => applyTemplate(event.target.value)}>
+                    <option value="">No template</option>
+                    {templates.map((template) => (
+                      <option key={template.id} value={template.id}>
+                        {template.name} ({template.currency})
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Template BML tax is added when saving the calculation as a cost record.
+                </p>
+              </div>
               <Field label="Item cost">
                 <input
                   required

@@ -83,6 +83,21 @@ class InternalCostRecord(TimestampMixin, Base):
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
+class CostTemplate(TimestampMixin, Base):
+    __tablename__ = "cost_templates"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(160), nullable=False, unique=True, index=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    default_bml_tax: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=0)
+    default_import_tax: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=0)
+    default_shipping_cost: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=0)
+    default_additional_cost: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=0)
+    default_margin_percent: Mapped[Decimal] = mapped_column(Numeric(8, 2), nullable=False, default=0)
+    currency: Mapped[str] = mapped_column(String(8), nullable=False, default="MVR")
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+
 class UserAccess(TimestampMixin, Base):
     __tablename__ = "user_access"
 

@@ -1,13 +1,14 @@
 import { fetchOrders, type DashboardOrder } from "../lib/api";
+import { Badge } from "../components/ui/badge";
 import { formatCurrency, formatDate, safeDisplay } from "../lib/utils";
 import { ResourceListPage, StatusBadge } from "./ResourceListPage";
 
 function orderPrimary(order: DashboardOrder) {
-  return order.orderName || order.orderNumber || order.id;
+  return order.id || order.orderName || order.orderNumber;
 }
 
-function orderId(order: DashboardOrder) {
-  return order.id && order.id !== orderPrimary(order) ? order.id : "";
+function orderReference(order: DashboardOrder) {
+  return [order.orderName, order.orderNumber].filter(Boolean).join(" / ");
 }
 
 export function OrdersPage() {
@@ -17,12 +18,12 @@ export function OrdersPage() {
         {
           key: "order",
           label: "Order",
-          className: "w-[18%]",
+          className: "w-[17%]",
           render: (order) => (
             <div>
-              <p className="font-medium">{safeDisplay(orderPrimary(order))}</p>
-              {orderId(order) ? (
-                <p className="mt-1 break-all font-mono text-[11px] text-muted-foreground">{orderId(order)}</p>
+              <p className="break-all font-mono text-[11px] font-semibold">{safeDisplay(orderPrimary(order))}</p>
+              {orderReference(order) ? (
+                <p className="mt-1 text-xs text-muted-foreground">{orderReference(order)}</p>
               ) : null}
             </div>
           ),
@@ -53,10 +54,22 @@ export function OrdersPage() {
         {
           key: "total",
           label: "Total",
-          className: "w-[12%]",
+          className: "w-[11%]",
           render: (order) => (
             <span className="font-medium">{formatCurrency(order.total, order.currency)}</span>
           ),
+        },
+        {
+          key: "cost",
+          label: "Cost",
+          className: "w-[11%]",
+          render: (order) => <FinanceBadge order={order} />,
+        },
+        {
+          key: "profit",
+          label: "Profit",
+          className: "w-[12%]",
+          render: (order) => <ProfitCell order={order} />,
         },
         {
           key: "created",
@@ -83,12 +96,15 @@ export function OrdersPage() {
         { label: "Updated", render: (order) => formatDate(order.updatedAt) },
         { label: "Linked request", render: (order) => safeDisplay(order.linkedRequestId) },
         { label: "Source ID", render: (order) => safeDisplay(order.source?.sourceId) },
+        { label: "Finance status", render: (order) => <FinanceBadge order={order} /> },
+        { label: "Profit", render: (order) => <ProfitCell order={order} /> },
+        { label: "Linked cost records", render: (order) => <LinkedCosts order={order} /> },
       ]}
       detailTitle={(order) => safeDisplay(orderPrimary(order), "Order")}
       fetcher={fetchOrders}
-      mobileMeta={(order) => <StatusBadge value={order.financialStatus || order.status} />}
+      mobileMeta={(order) => <FinanceBadge order={order} />}
       mobileSubtitle={(order) =>
-        `${safeDisplay(order.customerName, "Customer")} · ${formatCurrency(order.total, order.currency)}`
+        `${safeDisplay(orderReference(order), "No order number")} · ${safeDisplay(order.customerName, "Customer")} · ${formatCurrency(order.total, order.currency)}`
       }
       mobileTitle={(order) => safeDisplay(orderPrimary(order), "Order")}
       searchPlaceholder="Search orders, customers, or IDs"
@@ -96,5 +112,53 @@ export function OrdersPage() {
       subtitle="Live Shopify orders from the existing ZAPP API."
       title="Orders"
     />
+  );
+}
+
+function FinanceBadge({ order }: { order: DashboardOrder }) {
+  const summary = order.financeSummary;
+  if (summary?.missingCostRecord) {
+    return <Badge variant="warning">Missing cost</Badge>;
+  }
+  if (summary?.hasCostRecord) {
+    return <Badge variant={Number(summary.totalProfitBase) >= 0 ? "success" : "destructive"}>Has cost</Badge>;
+  }
+  return <Badge variant="muted">No cost</Badge>;
+}
+
+function ProfitCell({ order }: { order: DashboardOrder }) {
+  const summary = order.financeSummary;
+  if (!summary?.hasCostRecord) {
+    return <span className="text-muted-foreground">--</span>;
+  }
+  const profit = Number(summary.totalProfitBase || 0);
+  return (
+    <div>
+      <p className={profit >= 0 ? "font-semibold text-emerald-600 dark:text-emerald-400" : "font-semibold text-red-600 dark:text-red-400"}>
+        {formatCurrency(profit, summary.baseCurrency)}
+      </p>
+      <p className="mt-1 text-[11px] text-muted-foreground">
+        {summary.marginPercent === null ? "--" : `${Number(summary.marginPercent).toFixed(2)}%`}
+      </p>
+    </div>
+  );
+}
+
+function LinkedCosts({ order }: { order: DashboardOrder }) {
+  const records = order.financeSummary?.costRecords ?? [];
+  if (records.length === 0) {
+    return <span className="text-muted-foreground">No linked cost records</span>;
+  }
+  return (
+    <div className="space-y-2">
+      {records.map((record) => (
+        <div key={record.id} className="rounded-md border bg-background/60 p-2">
+          <p className="font-medium">{safeDisplay(record.referenceLabel, `Cost #${record.id}`)}</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {formatCurrency(record.profitBase ?? record.profit, record.profitBase === null ? record.currency : order.financeSummary?.baseCurrency)}
+          </p>
+        </div>
+      ))}
+    </div>
   );
 }

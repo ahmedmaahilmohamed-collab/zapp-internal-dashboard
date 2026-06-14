@@ -8,6 +8,7 @@ import { AuthProvider, useAuth } from "./lib/auth-context";
 import { ToastProvider } from "./lib/toast-context";
 import { AccessManagementPage } from "./pages/AccessManagementPage";
 import { CalculatorPage } from "./pages/CalculatorPage";
+import { CostTemplatesPage } from "./pages/CostTemplatesPage";
 import { DiagnosticsPage } from "./pages/DiagnosticsPage";
 import { EmailLogsPage } from "./pages/EmailLogsPage";
 import { CostsPage, CurrenciesPage, ShippingRatesPage } from "./pages/FinancePages";
@@ -17,6 +18,7 @@ import { OverviewPage } from "./pages/OverviewPage";
 import { PendingApprovalPage } from "./pages/PendingApprovalPage";
 import { PlaceholderPage } from "./pages/PlaceholderPage";
 import { RegisterPage } from "./pages/RegisterPage";
+import { ReportsPage } from "./pages/ReportsPage";
 import { RequestsPage } from "./pages/RequestsPage";
 
 function LoadingScreen() {
@@ -101,6 +103,8 @@ function AppRoutes() {
 
           <Route element={<RequireAuth roles={["admin", "manager"]} />}>
             <Route path="costs" element={<CostsPage />} />
+            <Route path="cost-templates" element={<CostTemplatesPage />} />
+            <Route path="reports" element={<ReportsPage />} />
             <Route path="currencies" element={<CurrenciesPage />} />
             <Route path="shipping-rates" element={<ShippingRatesPage />} />
           </Route>

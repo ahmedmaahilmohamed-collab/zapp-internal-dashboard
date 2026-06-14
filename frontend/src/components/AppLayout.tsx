@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { NavLink, Outlet, useLocation } from "react-router-dom";
+import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import {
   BarChart3,
   Bell,
   Calculator,
   CircleDollarSign,
+  ClipboardList,
   Coins,
   FileText,
   LayoutDashboard,
@@ -22,7 +23,7 @@ import {
 
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
-import { UserRole } from "../lib/api";
+import { DashboardNotification, UserRole, fetchNotifications } from "../lib/api";
 import { useAuth } from "../lib/auth-context";
 import { cn } from "../lib/utils";
 
@@ -31,6 +32,8 @@ const navItems = [
   { title: "Orders", href: "/orders", icon: ShoppingCart, roles: ["admin", "manager", "viewer"] },
   { title: "Requests", href: "/requests", icon: FileText, roles: ["admin", "manager", "viewer"] },
   { title: "Costs", href: "/costs", icon: CircleDollarSign, roles: ["admin", "manager"] },
+  { title: "Cost Templates", href: "/cost-templates", icon: ClipboardList, roles: ["admin", "manager"] },
+  { title: "Reports", href: "/reports", icon: BarChart3, roles: ["admin", "manager"] },
   { title: "Currencies", href: "/currencies", icon: Coins, roles: ["admin", "manager"] },
   { title: "Shipping Rates", href: "/shipping-rates", icon: Truck, roles: ["admin", "manager"] },
   { title: "Calculator", href: "/calculator", icon: Calculator, roles: ["admin", "manager", "viewer"] },
@@ -68,6 +71,9 @@ function initials(name: string | undefined, email: string | undefined) {
 
 export function AppLayout() {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [notifications, setNotifications] = useState<DashboardNotification[]>([]);
+  const [notificationCount, setNotificationCount] = useState(0);
   const location = useLocation();
   const { theme, toggleTheme } = useTheme();
   const { user, logout } = useAuth();
@@ -84,6 +90,33 @@ export function AppLayout() {
 
   useEffect(() => {
     setMobileOpen(false);
+    setNotificationsOpen(false);
+  }, [location.pathname]);
+
+  useEffect(() => {
+    let ignore = false;
+
+    async function loadNotifications() {
+      try {
+        const response = await fetchNotifications();
+        if (!ignore) {
+          setNotifications(response.items);
+          setNotificationCount(response.unreadCount);
+        }
+      } catch {
+        if (!ignore) {
+          setNotifications([]);
+          setNotificationCount(0);
+        }
+      }
+    }
+
+    void loadNotifications();
+    const timer = window.setInterval(loadNotifications, 60000);
+    return () => {
+      ignore = true;
+      window.clearInterval(timer);
+    };
   }, [location.pathname]);
 
   return (
@@ -182,9 +215,59 @@ export function AppLayout() {
             <h1 className="hidden text-sm font-semibold lg:block">{pageTitle}</h1>
           </div>
           <div className="flex items-center gap-2">
-            <Button aria-label="Notifications" size="icon" variant="ghost">
-              <Bell className="h-4 w-4" />
-            </Button>
+            <div className="relative">
+              <Button
+                aria-label="Notifications"
+                size="icon"
+                variant="ghost"
+                onClick={() => setNotificationsOpen((current) => !current)}
+              >
+                <Bell className="h-4 w-4" />
+                {notificationCount > 0 ? (
+                  <span className="absolute right-1 top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-orange-500 px-1 text-[10px] font-semibold text-white">
+                    {notificationCount > 9 ? "9+" : notificationCount}
+                  </span>
+                ) : null}
+              </Button>
+              {notificationsOpen ? (
+                <div className="absolute right-0 top-10 z-50 w-[min(22rem,calc(100vw-2rem))] overflow-hidden rounded-lg border bg-card shadow-2xl">
+                  <div className="flex items-center justify-between gap-3 border-b p-3">
+                    <p className="text-sm font-semibold">Notifications</p>
+                    <Badge variant={notificationCount ? "warning" : "muted"}>{notificationCount}</Badge>
+                  </div>
+                  {notifications.length === 0 ? (
+                    <div className="p-4 text-sm text-muted-foreground">No active alerts.</div>
+                  ) : (
+                    <div className="max-h-96 overflow-y-auto p-2">
+                      {notifications.map((item) => (
+                        <Link
+                          key={item.id}
+                          className="block rounded-md p-3 transition hover:bg-muted/50"
+                          to={item.href}
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <p className="text-sm font-medium">{item.title}</p>
+                            <Badge
+                              className="shrink-0"
+                              variant={
+                                item.severity === "warning"
+                                  ? "warning"
+                                  : item.severity === "error"
+                                    ? "destructive"
+                                    : "muted"
+                              }
+                            >
+                              {item.type}
+                            </Badge>
+                          </div>
+                          <p className="mt-1 text-xs text-muted-foreground">{item.message}</p>
+                        </Link>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : null}
+            </div>
             <div className="hidden min-w-0 items-center gap-2 rounded-md border bg-card px-2 py-1.5 sm:flex">
               <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-muted text-xs font-semibold">
                 {initials(user?.name, user?.email)}

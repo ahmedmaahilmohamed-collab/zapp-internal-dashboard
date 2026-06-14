@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 from datetime import date, datetime, time, timezone
+from decimal import Decimal
 from math import ceil
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
+from .. import crud, models
 from ..config import get_settings
+from ..database import get_db
 from ..security import require_roles
 from ..zapp_client import ZappApiClient, ZappApiError
 
@@ -26,11 +31,14 @@ async def orders(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=MAX_PAGE_SIZE),
     _user=Depends(require_roles("admin", "manager", "viewer")),
+    db: Session = Depends(get_db),
 ):
     return await _fetch_dashboard_collection(
         path="/api/internal/orders",
         collection_keys=("items", "orders"),
         normalizer=normalize_order,
+        resource_type="order",
+        db=db,
         search=search,
         status=status,
         date_from=date_from,
@@ -49,11 +57,14 @@ async def requests(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=MAX_PAGE_SIZE),
     _user=Depends(require_roles("admin", "manager", "viewer")),
+    db: Session = Depends(get_db),
 ):
     return await _fetch_dashboard_collection(
         path="/api/internal/purchase-requests",
         collection_keys=("items", "requests"),
         normalizer=normalize_request,
+        resource_type="request",
+        db=db,
         search=search,
         status=status,
         date_from=date_from,
@@ -91,6 +102,8 @@ async def _fetch_dashboard_collection(
     path: str,
     collection_keys: tuple[str, ...],
     normalizer,
+    resource_type: str | None = None,
+    db: Session | None = None,
     search: str | None,
     status: str | None,
     date_from: date | None,
@@ -142,6 +155,9 @@ async def _fetch_dashboard_collection(
         page_items = normalized[start:end]
     else:
         page_items = normalized
+
+    if db is not None and resource_type in {"order", "request"}:
+        page_items = _attach_finance_summaries(page_items, resource_type=resource_type, db=db)
 
     return {
         "success": True,
@@ -337,6 +353,163 @@ def _apply_local_filters(
         return True
 
     return [item for item in items if matches(item)]
+
+
+def _attach_finance_summaries(
+    items: list[dict[str, Any]],
+    *,
+    resource_type: str,
+    db: Session,
+) -> list[dict[str, Any]]:
+    cost_records = db.scalars(select(models.InternalCostRecord)).all()
+    context = crud.build_currency_conversion_context(db)
+    enriched: list[dict[str, Any]] = []
+
+    for item in items:
+        candidates = _finance_match_candidates(item, resource_type)
+        matched_records = [
+            record
+            for record in cost_records
+            if _cost_record_matches(record, candidates)
+        ]
+        next_item = dict(item)
+        next_item["financeSummary"] = _finance_summary_for_item(
+            item,
+            matched_records,
+            context,
+            resource_type=resource_type,
+        )
+        enriched.append(next_item)
+
+    return enriched
+
+
+def _finance_match_candidates(item: dict[str, Any], resource_type: str) -> set[str]:
+    keys = (
+        ("id", "orderName", "orderNumber", "linkedRequestId")
+        if resource_type == "order"
+        else ("id", "requestNumber", "reference", "publicToken", "linkedOrderId")
+    )
+    candidates = {
+        _normalize_match_value(item.get(key))
+        for key in keys
+        if _normalize_match_value(item.get(key))
+    }
+    source = item.get("source")
+    if isinstance(source, dict):
+        candidates.add(_normalize_match_value(source.get("sourceId")))
+    return {candidate for candidate in candidates if candidate}
+
+
+def _cost_record_matches(record: models.InternalCostRecord, candidates: set[str]) -> bool:
+    if not candidates:
+        return False
+    values = {
+        _normalize_match_value(record.source_id),
+        _normalize_match_value(record.linked_order_id),
+        _normalize_match_value(record.linked_request_id),
+        _normalize_match_value(record.reference_label),
+    }
+    return bool(candidates.intersection({value for value in values if value}))
+
+
+def _finance_summary_for_item(
+    item: dict[str, Any],
+    records: list[models.InternalCostRecord],
+    context: dict,
+    *,
+    resource_type: str,
+) -> dict[str, Any]:
+    total_sale = Decimal("0")
+    total_cost = Decimal("0")
+    total_profit = Decimal("0")
+    converted_count = 0
+    warnings: set[str] = set()
+    safe_records = []
+
+    for record in records:
+        values = crud.cost_record_base_values(record, context)
+        warnings.update(values["warnings"])
+        if values["converted"]:
+            converted_count += 1
+            total_sale += Decimal(values["saleTotalBase"] or 0)
+            total_cost += Decimal(values["totalCostBase"] or 0)
+            total_profit += Decimal(values["profitBase"] or 0)
+        safe_records.append(
+            {
+                "id": record.id,
+                "sourceType": record.source_type,
+                "sourceId": record.source_id,
+                "linkedOrderId": record.linked_order_id,
+                "linkedRequestId": record.linked_request_id,
+                "referenceLabel": record.reference_label,
+                "customerName": record.customer_name,
+                "title": record.title,
+                "saleTotal": _safe_decimal(record.sale_total),
+                "totalCost": _safe_decimal(record.total_cost),
+                "profit": _safe_decimal(record.profit),
+                "marginPercent": _safe_optional_decimal(record.margin_percent),
+                "currency": record.currency,
+                "saleTotalBase": _safe_optional_decimal(values["saleTotalBase"]),
+                "totalCostBase": _safe_optional_decimal(values["totalCostBase"]),
+                "profitBase": _safe_optional_decimal(values["profitBase"]),
+                "updatedAt": record.updated_at.isoformat(),
+            }
+        )
+
+    margin = None if total_sale <= 0 else (total_profit / total_sale * Decimal("100")).quantize(Decimal("0.01"))
+    has_cost_record = bool(records)
+    return {
+        "hasCostRecord": has_cost_record,
+        "costRecordCount": len(records),
+        "convertedRecordCount": converted_count,
+        "excludedRecordCount": len(records) - converted_count,
+        "totalSaleValueBase": _safe_decimal(total_sale),
+        "totalCostValueBase": _safe_decimal(total_cost),
+        "totalProfitBase": _safe_decimal(total_profit),
+        "marginPercent": _safe_optional_decimal(margin),
+        "missingCostRecord": (not has_cost_record) and _requires_cost_record(item, resource_type),
+        "baseCurrency": context["baseCurrency"],
+        "conversionWarnings": sorted(warnings),
+        "costRecords": safe_records,
+    }
+
+
+def _requires_cost_record(item: dict[str, Any], resource_type: str) -> bool:
+    status_text = _status_text_for_finance(item)
+    if any(word in status_text for word in ("cancel", "refund", "reject", "declin", "void")):
+        return False
+    if resource_type == "order":
+        return any(word in status_text for word in ("paid", "fulfilled", "complete", "approved", "success"))
+    return any(word in status_text for word in ("paid", "approved", "complete", "success"))
+
+
+def _status_text_for_finance(item: dict[str, Any]) -> str:
+    return " ".join(
+        str(value or "").lower()
+        for value in (
+            item.get("status"),
+            item.get("financialStatus"),
+            item.get("fulfillmentStatus"),
+            item.get("quoteStatus"),
+            item.get("paymentStatus"),
+            item.get("receiptStatus"),
+        )
+    )
+
+
+def _normalize_match_value(value: Any) -> str:
+    return str(value or "").strip().lower()
+
+
+def _safe_decimal(value: Decimal | int | float | None) -> float:
+    return float(Decimal(value or 0).quantize(Decimal("0.01")))
+
+
+def _safe_optional_decimal(value: Decimal | int | float | None) -> float | None:
+    if value is None:
+        return None
+    return _safe_decimal(value)
 
 
 def _safe_error_response(error: ZappApiError) -> JSONResponse:
