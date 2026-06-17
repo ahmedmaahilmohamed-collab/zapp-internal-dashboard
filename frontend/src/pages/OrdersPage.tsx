@@ -15,6 +15,7 @@ import {
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
+import { BulkActionBar, DeveloperDetails } from "../components/list-page";
 import {
   CostPayload,
   CurrencyRecord,
@@ -64,12 +65,24 @@ const blankCostForm = {
 };
 
 function orderPrimary(order: DashboardOrder) {
-  return order.orderName || (order.orderNumber ? `#${order.orderNumber}` : order.id);
+  const candidate = order.orderName || (order.orderNumber ? `#${order.orderNumber}` : "");
+  return candidate && !isInternalIdentifier(candidate) ? candidate : "Shopify order";
 }
 
 function orderSubtitle(order: DashboardOrder) {
   const pieces = [order.sourceType, order.itemCount ? `${order.itemCount} item${order.itemCount === 1 ? "" : "s"}` : ""].filter(Boolean);
   return pieces.join(" · ");
+}
+
+function isInternalIdentifier(value: string | null | undefined) {
+  const text = String(value || "").trim().toLowerCase();
+  return (
+    !text ||
+    text.startsWith("gid://shopify/") ||
+    /^c[a-z0-9]{12,}$/.test(text) ||
+    /^request-[a-z0-9-]+$/.test(text) ||
+    /^[a-f0-9-]{24,}$/.test(text)
+  );
 }
 
 function truncateId(value: string) {
@@ -159,6 +172,8 @@ export function OrdersPage() {
   const [costForm, setCostForm] = useState(blankCostForm);
   const [costError, setCostError] = useState("");
   const [savingCost, setSavingCost] = useState(false);
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -278,6 +293,30 @@ export function OrdersPage() {
     data.source.upstreamStatus >= 200 &&
     data.source.upstreamStatus < 300;
   const summaryCurrency = visibleOrders.find((order) => order.currency)?.currency || "MVR";
+  const visibleSelectableIds = useMemo(() => visibleOrders.map((order) => order.id).filter(Boolean), [visibleOrders]);
+  const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const visibleIdSet = useMemo(() => new Set(visibleSelectableIds), [visibleSelectableIds]);
+  const selectedOrders = useMemo(
+    () => visibleOrders.filter((order) => selectedIdSet.has(order.id)),
+    [selectedIdSet, visibleOrders],
+  );
+  const allVisibleSelected =
+    visibleSelectableIds.length > 0 && visibleSelectableIds.every((id) => selectedIdSet.has(id));
+
+  useEffect(() => {
+    setSelectedIds([]);
+  }, [dateFrom, dateTo, payment, search, sortBy, status]);
+
+  useEffect(() => {
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === "Escape" && selectMode) {
+        setSelectMode(false);
+        setSelectedIds([]);
+      }
+    }
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [selectMode]);
 
   function applySearch() {
     setSearch(searchInput);
@@ -291,12 +330,13 @@ export function OrdersPage() {
     setDateFrom("");
     setDateTo("");
     setSortBy("newest");
+    setSelectedIds([]);
   }
 
-  function exportOrders() {
+  function exportRows(rows: DashboardOrder[], filename: string) {
     const exported = downloadCsv(
-      "orders.csv",
-      visibleOrders.map((order) => ({
+      filename,
+      rows.map((order) => ({
         order: orderPrimary(order),
         internal_id: order.id,
         customer: order.customerName,
@@ -312,6 +352,41 @@ export function OrdersPage() {
       })),
     );
     notify(exported ? "Orders CSV exported." : "No orders to export.", exported ? "success" : "info");
+  }
+
+  function exportOrders() {
+    exportRows(visibleOrders, "orders.csv");
+  }
+
+  function exportSelectedOrders() {
+    exportRows(selectedOrders, "selected-orders.csv");
+  }
+
+  async function refreshSelectedOrders() {
+    await load();
+    setSelectedIds([]);
+    setSelectMode(false);
+    notify("Selected orders refreshed from the live API.", "success");
+  }
+
+  function toggleSelection(order: DashboardOrder) {
+    if (!order.id) return;
+    setSelectedIds((current) => (
+      current.includes(order.id) ? current.filter((id) => id !== order.id) : [...current, order.id]
+    ));
+  }
+
+  function toggleAllVisible() {
+    if (allVisibleSelected) {
+      setSelectedIds((current) => current.filter((id) => !visibleIdSet.has(id)));
+      return;
+    }
+    setSelectedIds((current) => Array.from(new Set([...current, ...visibleSelectableIds])));
+  }
+
+  function toggleSelectMode() {
+    setSelectMode((current) => !current);
+    setSelectedIds([]);
   }
 
   async function copyOrderLabel(order: DashboardOrder) {
@@ -376,7 +451,7 @@ export function OrdersPage() {
   }
 
   return (
-    <div className="mx-auto max-w-7xl space-y-5">
+    <div className="mx-auto w-full min-w-0 max-w-7xl space-y-5 overflow-x-hidden">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <div className="flex flex-wrap items-center gap-2">
@@ -393,6 +468,9 @@ export function OrdersPage() {
           <Button disabled={!visibleOrders.length} variant="outline" onClick={exportOrders}>
             <Download className="h-4 w-4" />
             Export
+          </Button>
+          <Button disabled={!visibleOrders.length || loading} variant={selectMode ? "secondary" : "outline"} onClick={toggleSelectMode}>
+            {selectMode ? `Cancel selection${selectedIds.length ? ` (${selectedIds.length})` : ""}` : "Select"}
           </Button>
           <Button disabled={loading} onClick={load}>
             <RefreshCcw className={cn("h-4 w-4", loading && "animate-spin")} />
@@ -464,6 +542,17 @@ export function OrdersPage() {
         </Card>
       ) : null}
 
+      <BulkActionBar count={selectedIds.length} title={`${selectedIds.length} order${selectedIds.length === 1 ? "" : "s"} selected`} onClear={() => setSelectedIds([])}>
+        <Button disabled={!selectedOrders.length || loading} variant="outline" onClick={exportSelectedOrders}>
+          <Download className="h-4 w-4" />
+          Export selected
+        </Button>
+        <Button disabled={!selectedOrders.length || loading} variant="outline" onClick={refreshSelectedOrders}>
+          <RefreshCcw className="h-4 w-4" />
+          Refresh selected
+        </Button>
+      </BulkActionBar>
+
       <Card className="overflow-hidden">
         <CardHeader className="flex flex-row items-center justify-between gap-3 border-b p-4">
           <div>
@@ -488,9 +577,20 @@ export function OrdersPage() {
         ) : (
           <>
             <div className="hidden overflow-x-auto xl:block">
-              <table className="w-full min-w-[1160px] table-fixed border-collapse text-left">
+              <table className="w-full min-w-[1200px] table-fixed border-collapse text-left">
                 <thead className="sticky top-0 z-10 border-b bg-muted/70 backdrop-blur">
                   <tr>
+                    {selectMode ? (
+                      <HeaderCell className="w-[52px] text-center">
+                        <input
+                          aria-label="Select all visible orders"
+                          checked={allVisibleSelected}
+                          disabled={visibleSelectableIds.length === 0}
+                          type="checkbox"
+                          onChange={toggleAllVisible}
+                        />
+                      </HeaderCell>
+                    ) : null}
                     <HeaderCell className="w-[180px]">Order</HeaderCell>
                     <HeaderCell className="w-[220px]">Customer</HeaderCell>
                     <HeaderCell className="w-[150px]">Fulfillment</HeaderCell>
@@ -504,7 +604,25 @@ export function OrdersPage() {
                 </thead>
                 <tbody className="divide-y">
                   {visibleOrders.map((order) => (
-                    <tr key={order.id || JSON.stringify(order.source)} className="h-[76px] transition hover:bg-muted/30">
+                    <tr
+                      key={order.id || JSON.stringify(order.source)}
+                      className={cn("h-[76px] transition hover:bg-muted/30", selectMode && "cursor-pointer", selectedIdSet.has(order.id) && "bg-primary/5")}
+                      onClick={() => {
+                        if (selectMode) toggleSelection(order);
+                      }}
+                    >
+                      {selectMode ? (
+                        <td className="px-4 py-4 text-center align-middle">
+                          <input
+                            aria-label="Select order"
+                            checked={selectedIdSet.has(order.id)}
+                            disabled={!order.id}
+                            type="checkbox"
+                            onChange={() => toggleSelection(order)}
+                            onClick={(event) => event.stopPropagation()}
+                          />
+                        </td>
+                      ) : null}
                       <td className="px-4 py-4 align-middle">
                         <OrderLabel order={order} onCopy={copyOrderLabel} />
                       </td>
@@ -530,7 +648,13 @@ export function OrdersPage() {
                         <DateCell value={order.createdAt} />
                       </td>
                       <td className="px-4 py-4 align-middle">
-                        <RowActions order={order} onMore={() => readOnlyAction("More actions")} onView={setSelected} />
+                        {selectMode ? (
+                          <span className="block text-center text-xs text-muted-foreground">
+                            {selectedIdSet.has(order.id) ? "Selected" : "Select row"}
+                          </span>
+                        ) : (
+                          <RowActions order={order} onMore={() => readOnlyAction("More actions")} onView={setSelected} />
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -542,11 +666,14 @@ export function OrdersPage() {
               {visibleOrders.map((order) => (
                 <OrderCard
                   key={order.id || JSON.stringify(order.source)}
+                  isSelected={selectedIdSet.has(order.id)}
                   order={order}
                   onCopy={copyOrderLabel}
                   onCost={openCostForm}
                   onMore={() => readOnlyAction("More actions")}
+                  onSelect={toggleSelection}
                   onView={setSelected}
+                  selectMode={selectMode}
                 />
               ))}
             </div>
@@ -613,10 +740,19 @@ function OrderLabel({ order, onCopy }: { order: DashboardOrder; onCopy: (order: 
     <div className="min-w-0">
       <div className="flex min-w-0 items-center gap-2">
         <span className="max-w-[118px] truncate whitespace-nowrap font-mono text-xs font-semibold" title={primary}>
-          {truncateId(primary)}
+          {primary}
         </span>
         {primary ? (
-          <Button aria-label="Copy order" className="h-7 w-7 shrink-0" size="icon" variant="ghost" onClick={() => onCopy(order)}>
+          <Button
+            aria-label="Copy order"
+            className="h-7 w-7 shrink-0"
+            size="icon"
+            variant="ghost"
+            onClick={(event) => {
+              event.stopPropagation();
+              onCopy(order);
+            }}
+          >
             <Copy className="h-3.5 w-3.5" />
           </Button>
         ) : null}
@@ -753,22 +889,46 @@ function RowActions({
 }
 
 function OrderCard({
+  isSelected,
   order,
   onCopy,
   onCost,
   onMore,
+  onSelect,
   onView,
+  selectMode,
 }: {
+  isSelected: boolean;
   order: DashboardOrder;
   onCopy: (order: DashboardOrder) => void;
   onCost: (order: DashboardOrder) => void;
   onMore: () => void;
+  onSelect: (order: DashboardOrder) => void;
   onView: (order: DashboardOrder) => void;
+  selectMode: boolean;
 }) {
   return (
-    <div className="rounded-md border bg-background p-4">
+    <div
+      className={cn("rounded-md border bg-background p-4", selectMode && "cursor-pointer", isSelected && "border-primary/30 bg-primary/5")}
+      onClick={() => {
+        if (selectMode) onSelect(order);
+      }}
+    >
       <div className="flex items-start justify-between gap-3">
-        <OrderLabel order={order} onCopy={onCopy} />
+        <div className="flex min-w-0 items-start gap-3">
+          {selectMode ? (
+            <input
+              aria-label="Select order"
+              checked={isSelected}
+              className="mt-1 shrink-0"
+              disabled={!order.id}
+              type="checkbox"
+              onChange={() => onSelect(order)}
+              onClick={(event) => event.stopPropagation()}
+            />
+          ) : null}
+          <OrderLabel order={order} onCopy={onCopy} />
+        </div>
         <DateCell value={order.createdAt} />
       </div>
       <div className="mt-4">
@@ -788,7 +948,11 @@ function OrderCard({
       </div>
       <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
         <CostBadge order={order} onClick={onCost} />
-        <RowActions order={order} onMore={onMore} onView={onView} />
+        {selectMode ? (
+          <span className="text-xs text-muted-foreground">{isSelected ? "Selected" : "Tap card to select"}</span>
+        ) : (
+          <RowActions order={order} onMore={onMore} onView={onView} />
+        )}
       </div>
     </div>
   );
@@ -797,7 +961,6 @@ function OrderCard({
 function OrderDetails({ order, onClose }: { order: DashboardOrder; onClose: () => void }) {
   const fields = [
     ["Order", orderPrimary(order)],
-    ["Internal order ID", order.id],
     ["Order name", order.orderName],
     ["Order number", order.orderNumber],
     ["Source type", order.sourceType],
@@ -813,8 +976,12 @@ function OrderDetails({ order, onClose }: { order: DashboardOrder; onClose: () =
     ["Tracking", order.trackingNumber],
     ["Created", `${dateParts(order.createdAt).date} ${dateParts(order.createdAt).time}`],
     ["Updated", `${dateParts(order.updatedAt).date} ${dateParts(order.updatedAt).time}`],
-    ["Linked request", order.linkedRequestId],
+  ];
+  const developerFields: Array<[string, ReactNode]> = [
+    ["Internal order ID", order.id],
+    ["Linked request ID", order.linkedRequestId],
     ["Source ID", order.source?.sourceId],
+    ["Available fields", order.source?.availableFields?.join(", ")],
   ];
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-4 backdrop-blur-sm sm:items-center">
@@ -841,6 +1008,7 @@ function OrderDetails({ order, onClose }: { order: DashboardOrder; onClose: () =
               <LinkedCosts order={order} />
             </div>
           </div>
+          <DeveloperDetails fields={developerFields} />
         </div>
       </div>
     </div>

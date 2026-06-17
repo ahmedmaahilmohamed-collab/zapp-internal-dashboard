@@ -16,6 +16,7 @@ import {
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
+import { BulkActionBar, DeveloperDetails } from "../components/list-page";
 import {
   CostPayload,
   CurrencyRecord,
@@ -63,11 +64,26 @@ const blankCostForm = {
 };
 
 function requestPrimary(request: DashboardRequest) {
-  return request.requestNumber || request.reference || request.id;
+  const candidate = request.requestNumber || request.reference || request.publicToken || "";
+  if (candidate && !isInternalIdentifier(candidate)) {
+    return candidate;
+  }
+  return request.productTitle || "Purchase request";
 }
 
 function truncateId(value: string) {
   return value.length <= 12 ? value : `${value.slice(0, 8)}...`;
+}
+
+function isInternalIdentifier(value: string | null | undefined) {
+  const text = String(value || "").trim().toLowerCase();
+  return (
+    !text ||
+    text.startsWith("gid://shopify/") ||
+    /^c[a-z0-9]{12,}$/.test(text) ||
+    /^request-[a-z0-9-]+$/.test(text) ||
+    /^[a-f0-9-]{24,}$/.test(text)
+  );
 }
 
 function dateParts(value: string) {
@@ -154,6 +170,8 @@ export function RequestsPage() {
   const [costForm, setCostForm] = useState(blankCostForm);
   const [costError, setCostError] = useState("");
   const [savingCost, setSavingCost] = useState(false);
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -187,13 +205,27 @@ export function RequestsPage() {
 
   const visibleRequests = useMemo(() => {
     const searchText = normalizedText(search);
+    const statusText = normalizedText(status);
     const paymentText = normalizedText(payment);
     const filtered = (data?.items ?? []).filter((request) => {
+      if (statusText) {
+        const requestStatus = normalizedText(`${request.status} ${request.quoteStatus}`);
+        if (!requestStatus.includes(statusText)) {
+          return false;
+        }
+      }
       if (paymentText) {
         const requestPayment = normalizedText(`${request.paymentStatus} ${request.receiptStatus}`);
         if (!requestPayment.includes(paymentText)) {
           return false;
         }
+      }
+      const createdTime = request.createdAt ? new Date(request.createdAt).getTime() : Number.NaN;
+      if (dateFrom && (Number.isNaN(createdTime) || createdTime < new Date(`${dateFrom}T00:00:00`).getTime())) {
+        return false;
+      }
+      if (dateTo && (Number.isNaN(createdTime) || createdTime > new Date(`${dateTo}T23:59:59`).getTime())) {
+        return false;
       }
       if (searchText) {
         const haystack = normalizedText(
@@ -226,7 +258,7 @@ export function RequestsPage() {
       }
       return new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime();
     });
-  }, [data?.items, payment, search, sortBy]);
+  }, [data?.items, dateFrom, dateTo, payment, search, sortBy, status]);
 
   const summary = useMemo(() => {
     return visibleRequests.reduce(
@@ -256,6 +288,30 @@ export function RequestsPage() {
     data.source.upstreamStatus >= 200 &&
     data.source.upstreamStatus < 300;
   const summaryCurrency = visibleRequests.find((request) => request.currency)?.currency || "MVR";
+  const visibleSelectableIds = useMemo(() => visibleRequests.map((request) => request.id).filter(Boolean), [visibleRequests]);
+  const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const visibleIdSet = useMemo(() => new Set(visibleSelectableIds), [visibleSelectableIds]);
+  const selectedRequests = useMemo(
+    () => visibleRequests.filter((request) => selectedIdSet.has(request.id)),
+    [selectedIdSet, visibleRequests],
+  );
+  const allVisibleSelected =
+    visibleSelectableIds.length > 0 && visibleSelectableIds.every((id) => selectedIdSet.has(id));
+
+  useEffect(() => {
+    setSelectedIds([]);
+  }, [dateFrom, dateTo, payment, search, sortBy, status]);
+
+  useEffect(() => {
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === "Escape" && selectMode) {
+        setSelectMode(false);
+        setSelectedIds([]);
+      }
+    }
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [selectMode]);
 
   function applySearch() {
     setSearch(searchInput);
@@ -269,12 +325,13 @@ export function RequestsPage() {
     setDateFrom("");
     setDateTo("");
     setSortBy("newest");
+    setSelectedIds([]);
   }
 
-  function exportRequests() {
+  function exportRows(rows: DashboardRequest[], filename: string) {
     const exported = downloadCsv(
-      "requests.csv",
-      visibleRequests.map((request) => ({
+      filename,
+      rows.map((request) => ({
         id: request.id,
         request_number: request.requestNumber,
         reference: request.reference,
@@ -290,6 +347,38 @@ export function RequestsPage() {
       })),
     );
     notify(exported ? "Requests CSV exported." : "No requests to export.", exported ? "success" : "info");
+  }
+
+  function exportRequests() {
+    exportRows(visibleRequests, "requests.csv");
+  }
+
+  function exportSelectedRequests() {
+    exportRows(selectedRequests, "selected-requests.csv");
+  }
+
+  function unsupportedBulkAction(label: string) {
+    notify(`${label} needs a safe request write API. The current ZAPP integration is read-only.`, "info");
+  }
+
+  function toggleSelection(request: DashboardRequest) {
+    if (!request.id) return;
+    setSelectedIds((current) => (
+      current.includes(request.id) ? current.filter((id) => id !== request.id) : [...current, request.id]
+    ));
+  }
+
+  function toggleAllVisible() {
+    if (allVisibleSelected) {
+      setSelectedIds((current) => current.filter((id) => !visibleIdSet.has(id)));
+      return;
+    }
+    setSelectedIds((current) => Array.from(new Set([...current, ...visibleSelectableIds])));
+  }
+
+  function toggleSelectMode() {
+    setSelectMode((current) => !current);
+    setSelectedIds([]);
   }
 
   async function copyRequestId(request: DashboardRequest) {
@@ -354,7 +443,7 @@ export function RequestsPage() {
   }
 
   return (
-    <div className="mx-auto max-w-7xl space-y-5">
+    <div className="mx-auto w-full min-w-0 max-w-7xl space-y-5 overflow-x-hidden">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <div className="flex flex-wrap items-center gap-2">
@@ -371,6 +460,9 @@ export function RequestsPage() {
           <Button disabled={!visibleRequests.length} variant="outline" onClick={exportRequests}>
             <Download className="h-4 w-4" />
             Export
+          </Button>
+          <Button disabled={!visibleRequests.length || loading} variant={selectMode ? "secondary" : "outline"} onClick={toggleSelectMode}>
+            {selectMode ? `Cancel selection${selectedIds.length ? ` (${selectedIds.length})` : ""}` : "Select"}
           </Button>
           <Button disabled={loading} onClick={load}>
             <RefreshCcw className={cn("h-4 w-4", loading && "animate-spin")} />
@@ -442,6 +534,28 @@ export function RequestsPage() {
         </Card>
       ) : null}
 
+      <BulkActionBar count={selectedIds.length} title={`${selectedIds.length} request${selectedIds.length === 1 ? "" : "s"} selected`} onClear={() => setSelectedIds([])}>
+        <Button disabled={!selectedRequests.length || loading} variant="outline" onClick={exportSelectedRequests}>
+          <Download className="h-4 w-4" />
+          Export selected
+        </Button>
+        <Button disabled={!selectedRequests.length || loading} variant="outline" onClick={() => unsupportedBulkAction("Delete selected")}>
+          Delete selected
+        </Button>
+        <Button disabled={!selectedRequests.length || loading} variant="outline" onClick={() => unsupportedBulkAction("Mark as Reviewing")}>
+          Mark Reviewing
+        </Button>
+        <Button disabled={!selectedRequests.length || loading} variant="outline" onClick={() => unsupportedBulkAction("Mark as Awaiting Customer")}>
+          Mark Awaiting
+        </Button>
+        <Button disabled={!selectedRequests.length || loading} variant="outline" onClick={() => unsupportedBulkAction("Mark as Quoted")}>
+          Mark Quoted
+        </Button>
+        <Button disabled={!selectedRequests.length || loading} variant="outline" onClick={() => unsupportedBulkAction("Mark as Cancelled")}>
+          Mark Cancelled
+        </Button>
+      </BulkActionBar>
+
       <Card className="overflow-hidden">
         <CardHeader className="flex flex-row items-center justify-between gap-3 border-b p-4">
           <div>
@@ -466,9 +580,20 @@ export function RequestsPage() {
         ) : (
           <>
             <div className="hidden overflow-x-auto xl:block">
-              <table className="w-full min-w-[1180px] table-fixed border-collapse text-left">
+              <table className="w-full min-w-[1230px] table-fixed border-collapse text-left">
                 <thead className="sticky top-0 z-10 border-b bg-muted/70 backdrop-blur">
                   <tr>
+                    {selectMode ? (
+                      <HeaderCell className="w-[52px] text-center">
+                        <input
+                          aria-label="Select all visible requests"
+                          checked={allVisibleSelected}
+                          disabled={visibleSelectableIds.length === 0}
+                          type="checkbox"
+                          onChange={toggleAllVisible}
+                        />
+                      </HeaderCell>
+                    ) : null}
                     <HeaderCell className="w-[178px]">Request</HeaderCell>
                     <HeaderCell className="w-[220px]">Customer</HeaderCell>
                     <HeaderCell className="w-[145px]">Status</HeaderCell>
@@ -482,7 +607,25 @@ export function RequestsPage() {
                 </thead>
                 <tbody className="divide-y">
                   {visibleRequests.map((request) => (
-                    <tr key={request.id || JSON.stringify(request.source)} className="h-[76px] transition hover:bg-muted/30">
+                    <tr
+                      key={request.id || JSON.stringify(request.source)}
+                      className={cn("h-[76px] transition hover:bg-muted/30", selectMode && "cursor-pointer", selectedIdSet.has(request.id) && "bg-primary/5")}
+                      onClick={() => {
+                        if (selectMode) toggleSelection(request);
+                      }}
+                    >
+                      {selectMode ? (
+                        <td className="px-4 py-4 text-center align-middle">
+                          <input
+                            aria-label="Select request"
+                            checked={selectedIdSet.has(request.id)}
+                            disabled={!request.id}
+                            type="checkbox"
+                            onChange={() => toggleSelection(request)}
+                            onClick={(event) => event.stopPropagation()}
+                          />
+                        </td>
+                      ) : null}
                       <td className="px-4 py-4 align-middle">
                         <RequestId request={request} onCopy={copyRequestId} />
                       </td>
@@ -508,12 +651,18 @@ export function RequestsPage() {
                         <DateCell value={request.createdAt} />
                       </td>
                       <td className="px-4 py-4 align-middle">
-                        <RowActions
-                          request={request}
-                          onMore={() => readOnlyAction("More actions")}
-                          onQuote={() => readOnlyAction("Quote")}
-                          onView={setSelected}
-                        />
+                        {selectMode ? (
+                          <span className="block text-center text-xs text-muted-foreground">
+                            {selectedIdSet.has(request.id) ? "Selected" : "Select row"}
+                          </span>
+                        ) : (
+                          <RowActions
+                            request={request}
+                            onMore={() => readOnlyAction("More actions")}
+                            onQuote={() => readOnlyAction("Quote")}
+                            onView={setSelected}
+                          />
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -525,12 +674,15 @@ export function RequestsPage() {
               {visibleRequests.map((request) => (
                 <RequestCard
                   key={request.id || JSON.stringify(request.source)}
+                  isSelected={selectedIdSet.has(request.id)}
                   request={request}
                   onCopy={copyRequestId}
                   onCost={openCostForm}
                   onMore={() => readOnlyAction("More actions")}
                   onQuote={() => readOnlyAction("Quote")}
+                  onSelect={toggleSelection}
                   onView={setSelected}
+                  selectMode={selectMode}
                 />
               ))}
             </div>
@@ -589,10 +741,19 @@ function RequestId({ request, onCopy }: { request: DashboardRequest; onCopy: (re
     <div className="min-w-0">
       <div className="flex min-w-0 items-center gap-2">
         <span className="max-w-[112px] truncate whitespace-nowrap font-mono text-xs font-semibold" title={primary}>
-          {truncateId(primary)}
+          {primary}
         </span>
         {primary ? (
-          <Button aria-label="Copy request ID" className="h-7 w-7 shrink-0" size="icon" variant="ghost" onClick={() => onCopy(request)}>
+          <Button
+            aria-label="Copy request ID"
+            className="h-7 w-7 shrink-0"
+            size="icon"
+            variant="ghost"
+            onClick={(event) => {
+              event.stopPropagation();
+              onCopy(request);
+            }}
+          >
             <Copy className="h-3.5 w-3.5" />
           </Button>
         ) : null}
@@ -642,7 +803,7 @@ function CostBadge({ request, onClick }: { request: DashboardRequest; onClick: (
   if (summary?.missingCostRecord) {
     return (
       <button
-        className="flex h-8 min-w-[120px] items-center justify-center rounded-full border border-orange-500/20 bg-orange-500/10 px-3 text-[10px] font-medium text-orange-600 transition hover:bg-orange-500/20 dark:text-orange-400"
+        className="flex h-8 min-w-[120px] items-center justify-center rounded-md border border-orange-500/20 bg-orange-500/10 px-3 text-[10px] font-medium text-orange-600 transition hover:bg-orange-500/20 dark:text-orange-400"
         title="Profit cannot be calculated until cost data is entered."
         type="button"
         onClick={() => onClick(request)}
@@ -653,14 +814,14 @@ function CostBadge({ request, onClick }: { request: DashboardRequest; onClick: (
   }
   if (summary?.hasCostRecord) {
     return (
-      <Badge className="flex h-8 min-w-[120px] justify-center rounded-full normal-case tracking-normal" variant="success">
+      <Badge className="flex h-8 min-w-[120px] justify-center rounded-md normal-case tracking-normal" variant="success">
         Cost Added
       </Badge>
     );
   }
   return (
     <button
-      className="flex h-8 min-w-[120px] items-center justify-center rounded-full border bg-muted px-3 text-[10px] font-medium text-muted-foreground transition hover:bg-muted/70"
+      className="flex h-8 min-w-[120px] items-center justify-center rounded-md border bg-muted px-3 text-[10px] font-medium text-muted-foreground transition hover:bg-muted/70"
       title="Profit cannot be calculated until cost data is entered."
       type="button"
       onClick={() => onClick(request)}
@@ -736,24 +897,48 @@ function RowActions({
 }
 
 function RequestCard({
+  isSelected,
   request,
   onCopy,
   onCost,
   onMore,
   onQuote,
+  onSelect,
   onView,
+  selectMode,
 }: {
+  isSelected: boolean;
   request: DashboardRequest;
   onCopy: (request: DashboardRequest) => void;
   onCost: (request: DashboardRequest) => void;
   onMore: () => void;
   onQuote: () => void;
+  onSelect: (request: DashboardRequest) => void;
   onView: (request: DashboardRequest) => void;
+  selectMode: boolean;
 }) {
   return (
-    <div className="rounded-md border bg-background p-4">
+    <div
+      className={cn("rounded-md border bg-background p-4", selectMode && "cursor-pointer", isSelected && "border-primary/30 bg-primary/5")}
+      onClick={() => {
+        if (selectMode) onSelect(request);
+      }}
+    >
       <div className="flex items-start justify-between gap-3">
-        <RequestId request={request} onCopy={onCopy} />
+        <div className="flex min-w-0 items-start gap-3">
+          {selectMode ? (
+            <input
+              aria-label="Select request"
+              checked={isSelected}
+              className="mt-1 shrink-0"
+              disabled={!request.id}
+              type="checkbox"
+              onChange={() => onSelect(request)}
+              onClick={(event) => event.stopPropagation()}
+            />
+          ) : null}
+          <RequestId request={request} onCopy={onCopy} />
+        </div>
         <DateCell value={request.createdAt} />
       </div>
       <div className="mt-4">
@@ -773,7 +958,11 @@ function RequestCard({
       </div>
       <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
         <CostBadge request={request} onClick={onCost} />
-        <RowActions request={request} onMore={onMore} onQuote={onQuote} onView={onView} />
+        {selectMode ? (
+          <span className="text-xs text-muted-foreground">{isSelected ? "Selected" : "Tap card to select"}</span>
+        ) : (
+          <RowActions request={request} onMore={onMore} onQuote={onQuote} onView={onView} />
+        )}
       </div>
     </div>
   );
@@ -781,7 +970,7 @@ function RequestCard({
 
 function RequestDetails({ request, onClose }: { request: DashboardRequest; onClose: () => void }) {
   const fields = [
-    ["Request ID", requestPrimary(request)],
+    ["Request", requestPrimary(request)],
     ["Request number", request.requestNumber],
     ["Reference", request.reference],
     ["Customer", request.customerName],
@@ -791,9 +980,15 @@ function RequestDetails({ request, onClose }: { request: DashboardRequest; onClo
     ["Status", labelFromStatus(request.status)],
     ["Payment", labelFromStatus(request.paymentStatus || request.receiptStatus)],
     ["Quoted total", request.quotedTotal === null ? safeDisplay(request.quoteMvr || request.quoteUsd) : formatCurrency(request.quotedTotal, request.currency)],
-    ["Linked order", request.linkedOrderId],
     ["Latest message", request.latestMessageStatus],
     ["Email status", request.emailStatus],
+  ];
+  const developerFields: Array<[string, ReactNode]> = [
+    ["Internal request ID", request.id],
+    ["Public token", request.publicToken],
+    ["Linked order ID", request.linkedOrderId],
+    ["Source ID", request.source?.sourceId],
+    ["Available fields", request.source?.availableFields?.join(", ")],
   ];
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-4 backdrop-blur-sm sm:items-center">
@@ -820,6 +1015,7 @@ function RequestDetails({ request, onClose }: { request: DashboardRequest; onClo
               <LinkedCosts request={request} />
             </div>
           </div>
+          <DeveloperDetails fields={developerFields} />
         </div>
       </div>
     </div>

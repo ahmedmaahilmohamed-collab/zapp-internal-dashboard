@@ -17,6 +17,7 @@ import {
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
+import { DeveloperDetails } from "../components/list-page";
 import { DashboardCollectionResponse, DashboardEmailLog, deleteEmailLog, deleteEmailLogs, fetchEmailLogs } from "../lib/api";
 import { useToast } from "../lib/toast-context";
 import { cn, downloadCsv, safeDisplay } from "../lib/utils";
@@ -183,6 +184,7 @@ export function EmailLogsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [selected, setSelected] = useState<DashboardEmailLog | null>(null);
+  const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [deletingId, setDeletingId] = useState("");
   const [bulkDeleting, setBulkDeleting] = useState(false);
@@ -311,6 +313,21 @@ export function EmailLogsPage() {
     setSelectedIds((current) => current.filter((id) => visibleIdSet.has(id)));
   }, [visibleIdSet]);
 
+  useEffect(() => {
+    setSelectedIds([]);
+  }, [dateFrom, dateTo, direction, excludeRecipients, linkedFilter, messageType, provider, recipient, search, status]);
+
+  useEffect(() => {
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === "Escape" && selectMode) {
+        setSelectMode(false);
+        setSelectedIds([]);
+      }
+    }
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [selectMode]);
+
   const summary = useMemo(() => {
     return visibleLogs.reduce(
       (acc, log) => {
@@ -348,6 +365,7 @@ export function EmailLogsPage() {
     setQuickRange("");
     setDateFrom("");
     setDateTo("");
+    setSelectedIds([]);
   }
 
   function applyQuickRange(value: string) {
@@ -379,6 +397,11 @@ export function EmailLogsPage() {
       return;
     }
     setSelectedIds((current) => Array.from(new Set([...current, ...visibleSelectableIds])));
+  }
+
+  function toggleSelectMode() {
+    setSelectMode((current) => !current);
+    setSelectedIds([]);
   }
 
   async function removeLogs(ids: string[], confirmMessage: string) {
@@ -427,9 +450,20 @@ export function EmailLogsPage() {
   }
 
   function exportLogs() {
+    exportRows(visibleLogs, "email-logs.csv");
+  }
+
+  function exportSelectedLogs() {
+    exportRows(
+      visibleLogs.filter((log) => selectedIdSet.has(emailLogDeleteId(log))),
+      "selected-email-logs.csv",
+    );
+  }
+
+  function exportRows(rows: DashboardEmailLog[], filename: string) {
     const exported = downloadCsv(
-      "email-logs.csv",
-      visibleLogs.map((log) => {
+      filename,
+      rows.map((log) => {
         const linked = linkedDisplay(log);
         return {
           subject: log.subject,
@@ -464,6 +498,9 @@ export function EmailLogsPage() {
           <Button disabled={!visibleLogs.length} variant="outline" onClick={exportLogs}>
             <Download className="h-4 w-4" />
             Export
+          </Button>
+          <Button disabled={!visibleLogs.length || loading} variant={selectMode ? "secondary" : "outline"} onClick={toggleSelectMode}>
+            {selectMode ? `Cancel selection${selectedIds.length ? ` (${selectedIds.length})` : ""}` : "Select"}
           </Button>
           <Button disabled={loading} onClick={load}>
             <RefreshCcw className={cn("h-4 w-4", loading && "animate-spin")} />
@@ -624,7 +661,11 @@ export function EmailLogsPage() {
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
-              <Button variant="outline" onClick={() => setSelectedIds([])}>
+              <Button disabled={bulkDeleting} variant="outline" onClick={exportSelectedLogs}>
+                <Download className="h-4 w-4" />
+                Export selected
+              </Button>
+              <Button variant="outline" onClick={() => { setSelectedIds([]); setSelectMode(false); }}>
                 Clear selection
               </Button>
               <Button
@@ -668,15 +709,17 @@ export function EmailLogsPage() {
               <table className="w-full min-w-[1180px] table-fixed border-collapse text-left">
                 <thead className="sticky top-0 z-10 border-b bg-muted/70 backdrop-blur">
                   <tr>
-                    <HeaderCell className="w-[52px] text-center">
-                      <input
-                        aria-label="Select all visible email logs"
-                        checked={allVisibleSelected}
-                        disabled={visibleSelectableIds.length === 0}
-                        type="checkbox"
-                        onChange={toggleAllVisible}
-                      />
-                    </HeaderCell>
+                    {selectMode ? (
+                      <HeaderCell className="w-[52px] text-center">
+                        <input
+                          aria-label="Select all visible email logs"
+                          checked={allVisibleSelected}
+                          disabled={visibleSelectableIds.length === 0}
+                          type="checkbox"
+                          onChange={toggleAllVisible}
+                        />
+                      </HeaderCell>
+                    ) : null}
                     <HeaderCell className="w-[290px]">Message</HeaderCell>
                     <HeaderCell className="w-[245px]">Recipient</HeaderCell>
                     <HeaderCell className="w-[130px]">Status</HeaderCell>
@@ -688,16 +731,25 @@ export function EmailLogsPage() {
                 </thead>
                 <tbody className="divide-y">
                   {visibleLogs.map((log) => (
-                    <tr key={log.id || `${log.subject}-${log.createdAt}`} className={cn("h-[76px] transition hover:bg-muted/30", selectedIdSet.has(emailLogDeleteId(log)) && "bg-orange-500/5")}>
-                      <td className="px-4 py-4 text-center align-middle">
-                        <input
-                          aria-label="Select email log"
-                          checked={selectedIdSet.has(emailLogDeleteId(log))}
-                          disabled={!emailLogDeleteId(log)}
-                          type="checkbox"
-                          onChange={() => toggleLogSelection(log)}
-                        />
-                      </td>
+                    <tr
+                      key={log.id || `${log.subject}-${log.createdAt}`}
+                      className={cn("h-[76px] transition hover:bg-muted/30", selectMode && "cursor-pointer", selectedIdSet.has(emailLogDeleteId(log)) && "bg-primary/5")}
+                      onClick={() => {
+                        if (selectMode) toggleLogSelection(log);
+                      }}
+                    >
+                      {selectMode ? (
+                        <td className="px-4 py-4 text-center align-middle">
+                          <input
+                            aria-label="Select email log"
+                            checked={selectedIdSet.has(emailLogDeleteId(log))}
+                            disabled={!emailLogDeleteId(log)}
+                            type="checkbox"
+                            onChange={() => toggleLogSelection(log)}
+                            onClick={(event) => event.stopPropagation()}
+                          />
+                        </td>
+                      ) : null}
                       <td className="px-4 py-4 align-middle">
                         <MessageCell log={log} />
                       </td>
@@ -717,21 +769,27 @@ export function EmailLogsPage() {
                         <DateCell value={log.createdAt} />
                       </td>
                       <td className="px-4 py-4 align-middle">
-                        <div className="flex items-center justify-center gap-1">
-                          <Button size="sm" variant="outline" onClick={() => setSelected(log)}>
-                            <Eye className="h-3.5 w-3.5" />
-                            View
-                          </Button>
-                          <Button
-                            disabled={deletingId === emailLogDeleteId(log)}
-                            size="icon"
-                            title="Delete from dashboard"
-                            variant="ghost"
-                            onClick={() => removeLog(log)}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
+                        {selectMode ? (
+                          <span className="block text-center text-xs text-muted-foreground">
+                            {selectedIdSet.has(emailLogDeleteId(log)) ? "Selected" : "Select row"}
+                          </span>
+                        ) : (
+                          <div className="flex items-center justify-center gap-1">
+                            <Button size="sm" variant="outline" onClick={() => setSelected(log)}>
+                              <Eye className="h-3.5 w-3.5" />
+                              View
+                            </Button>
+                            <Button
+                              disabled={deletingId === emailLogDeleteId(log)}
+                              size="icon"
+                              title="Delete from dashboard"
+                              variant="ghost"
+                              onClick={() => removeLog(log)}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -749,6 +807,7 @@ export function EmailLogsPage() {
                   onDelete={removeLog}
                   onSelect={toggleLogSelection}
                   onView={setSelected}
+                  selectMode={selectMode}
                 />
               ))}
             </div>
@@ -893,6 +952,7 @@ function EmailLogCard({
   onDelete,
   onSelect,
   onView,
+  selectMode,
 }: {
   deleting: boolean;
   isSelected: boolean;
@@ -900,19 +960,28 @@ function EmailLogCard({
   onDelete: (log: DashboardEmailLog) => void;
   onSelect: (log: DashboardEmailLog) => void;
   onView: (log: DashboardEmailLog) => void;
+  selectMode: boolean;
 }) {
   return (
-    <div className={cn("rounded-md border bg-background p-4", isSelected && "border-orange-500/30 bg-orange-500/5")}>
+    <div
+      className={cn("rounded-md border bg-background p-4", selectMode && "cursor-pointer", isSelected && "border-primary/30 bg-primary/5")}
+      onClick={() => {
+        if (selectMode) onSelect(log);
+      }}
+    >
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-start gap-3">
-          <input
-            aria-label="Select email log"
-            checked={isSelected}
-            className="mt-1 shrink-0"
-            disabled={!emailLogDeleteId(log)}
-            type="checkbox"
-            onChange={() => onSelect(log)}
-          />
+          {selectMode ? (
+            <input
+              aria-label="Select email log"
+              checked={isSelected}
+              className="mt-1 shrink-0"
+              disabled={!emailLogDeleteId(log)}
+              type="checkbox"
+              onChange={() => onSelect(log)}
+              onClick={(event) => event.stopPropagation()}
+            />
+          ) : null}
           <MessageCell log={log} />
         </div>
         <EmailStatusBadge value={log.status} />
@@ -924,14 +993,20 @@ function EmailLogCard({
         <InfoBlock label="Date"><DateCell value={log.createdAt} /></InfoBlock>
       </div>
       <div className="mt-4 flex justify-end gap-2">
-        <Button size="sm" variant="outline" onClick={() => onView(log)}>
-          <Eye className="h-3.5 w-3.5" />
-          View
-        </Button>
-        <Button disabled={deleting} size="sm" variant="outline" onClick={() => onDelete(log)}>
-          <Trash2 className="h-3.5 w-3.5" />
-          Delete
-        </Button>
+        {selectMode ? (
+          <span className="text-xs text-muted-foreground">{isSelected ? "Selected" : "Tap card to select"}</span>
+        ) : (
+          <>
+            <Button size="sm" variant="outline" onClick={() => onView(log)}>
+              <Eye className="h-3.5 w-3.5" />
+              View
+            </Button>
+            <Button disabled={deleting} size="sm" variant="outline" onClick={() => onDelete(log)}>
+              <Trash2 className="h-3.5 w-3.5" />
+              Delete
+            </Button>
+          </>
+        )}
       </div>
     </div>
   );
@@ -958,20 +1033,14 @@ function EmailLogDetails({
   onDelete: (log: DashboardEmailLog) => void;
 }) {
   const fields: Array<[string, ReactNode]> = [
-    ["Log ID", safeDisplay(log.id)],
     ["Status", <EmailStatusBadge key="status" value={log.status} />],
     ["Message type", safeDisplay(log.messageType)],
     ["Event type", safeDisplay(log.eventType)],
     ["Direction", safeDisplay(log.direction)],
     ["Provider", safeDisplay(log.provider)],
-    ["Provider email ID", safeDisplay(log.resendEmailId)],
-    ["Webhook delivery ID", safeDisplay(log.webhookDeliveryId)],
     ["Subject", safeDisplay(log.subject)],
     ["From", safeDisplay(log.fromEmail)],
     ["To", safeDisplay(log.toEmail)],
-    ["Linked request ID", safeDisplay(log.linkedRequestId)],
-    ["Linked order ID", safeDisplay(log.linkedOrderId)],
-    ["Request token", safeDisplay(log.requestPublicToken)],
     ["Order reference", safeDisplay(log.orderReference)],
     ["Request customer", safeDisplay(log.requestCustomerName)],
     ["Request email", safeDisplay(log.requestCustomerEmail)],
@@ -981,6 +1050,17 @@ function EmailLogDetails({
     ["Metadata", safeDisplay(log.metadataSummary)],
     ["Created", `${dateParts(log.createdAt).date} ${dateParts(log.createdAt).time}`],
     ["Updated", `${dateParts(log.updatedAt).date} ${dateParts(log.updatedAt).time}`],
+  ];
+  const developerFields: Array<[string, ReactNode]> = [
+    ["Log ID", safeDisplay(log.id)],
+    ["Provider email ID", safeDisplay(log.resendEmailId)],
+    ["Webhook delivery ID", safeDisplay(log.webhookDeliveryId)],
+    ["Linked request ID", safeDisplay(log.linkedRequestId)],
+    ["Linked order ID", safeDisplay(log.linkedOrderId)],
+    ["Request token", safeDisplay(log.requestPublicToken)],
+    ["Metadata", safeDisplay(log.metadataSummary)],
+    ["Source ID", safeDisplay(log.source?.sourceId)],
+    ["Upstream fields", log.source?.availableFields?.join(", ") || "None reported"],
   ];
 
   return (
@@ -1018,12 +1098,7 @@ function EmailLogDetails({
               {safeDisplay(log.bodyPreview, "No body preview available.")}
             </p>
           </div>
-          <div className="rounded-md border bg-muted/20 p-3 sm:col-span-2">
-            <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Upstream fields</p>
-            <p className="mt-2 break-words text-xs text-muted-foreground">
-              {log.source?.availableFields?.join(", ") || "None reported"}
-            </p>
-          </div>
+          <DeveloperDetails fields={developerFields} />
         </div>
       </div>
     </div>

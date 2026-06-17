@@ -127,15 +127,9 @@ export function AppLayout() {
           mobileOpen ? "translate-x-0" : "-translate-x-full",
         )}
       >
-        <div className="flex h-14 items-center justify-between border-b border-sidebar-border px-4">
-          <img
-            alt="ZAPP"
-            className="h-10 w-10 rounded-md object-cover shadow-sm"
-            src="/zapp-logo.png"
-          />
+        <div className="flex justify-end px-3 pt-3 lg:hidden">
           <Button
             aria-label="Close navigation"
-            className="lg:hidden"
             size="icon"
             variant="ghost"
             onClick={() => setMobileOpen(false)}
@@ -144,7 +138,7 @@ export function AppLayout() {
           </Button>
         </div>
 
-        <nav className="flex-1 space-y-1 overflow-y-auto p-3">
+        <nav className="flex-1 space-y-1 overflow-y-auto p-3 lg:pt-4">
           {visibleNavItems.map((item) => (
             <NavLink
               key={item.href}
