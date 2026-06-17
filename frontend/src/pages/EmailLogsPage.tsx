@@ -2,12 +2,14 @@ import { ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlertCircle,
   Calendar,
+  ChevronDown,
   Database,
   Download,
   Eye,
-  MoreHorizontal,
+  Filter,
   RefreshCcw,
   Search,
+  SlidersHorizontal,
   Trash2,
   X,
 } from "lucide-react";
@@ -15,7 +17,7 @@ import {
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
-import { DashboardCollectionResponse, DashboardEmailLog, deleteEmailLog, fetchEmailLogs } from "../lib/api";
+import { DashboardCollectionResponse, DashboardEmailLog, deleteEmailLog, deleteEmailLogs, fetchEmailLogs } from "../lib/api";
 import { useToast } from "../lib/toast-context";
 import { cn, downloadCsv, safeDisplay } from "../lib/utils";
 
@@ -131,6 +133,37 @@ function emailLogDeleteId(log: DashboardEmailLog) {
   return (log.id || log.source?.sourceId || "").trim();
 }
 
+function linkedKind(log: DashboardEmailLog) {
+  if (log.linkedOrderId || (log.orderReference && !isInternalId(log.orderReference))) {
+    return "order";
+  }
+  if (log.linkedRequestId || log.requestPublicToken || log.requestCustomerName || log.requestProductTitle) {
+    return "request";
+  }
+  return "unlinked";
+}
+
+function uniqueOptions(logs: DashboardEmailLog[], getValue: (log: DashboardEmailLog) => string) {
+  return Array.from(
+    new Set(
+      logs
+        .map((log) => getValue(log).trim())
+        .filter(Boolean)
+        .sort((a, b) => a.localeCompare(b)),
+    ),
+  );
+}
+
+function inputDateFromDaysAgo(days: number) {
+  const date = new Date();
+  date.setDate(date.getDate() - days);
+  return date.toISOString().slice(0, 10);
+}
+
+function todayInputDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
 export function EmailLogsPage() {
   const { notify } = useToast();
   const [data, setData] = useState<DashboardCollectionResponse<DashboardEmailLog> | null>(null);
@@ -139,12 +172,20 @@ export function EmailLogsPage() {
   const [status, setStatus] = useState("");
   const [recipient, setRecipient] = useState("");
   const [excludeRecipients, setExcludeRecipients] = useState("");
+  const [provider, setProvider] = useState("");
+  const [messageType, setMessageType] = useState("");
+  const [direction, setDirection] = useState("");
+  const [linkedFilter, setLinkedFilter] = useState("");
+  const [quickRange, setQuickRange] = useState("");
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [selected, setSelected] = useState<DashboardEmailLog | null>(null);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [deletingId, setDeletingId] = useState("");
+  const [bulkDeleting, setBulkDeleting] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -177,17 +218,36 @@ export function EmailLogsPage() {
 
   const visibleLogs = useMemo(() => {
     const searchText = normalizedText(search);
+    const statusText = normalizedText(status);
     const recipientText = normalizedText(recipient);
+    const providerText = normalizedText(provider);
+    const messageTypeText = normalizedText(messageType);
+    const directionText = normalizedText(direction);
     const excludedRecipientTerms = excludeRecipients
       .split(",")
       .map((value) => normalizedText(value))
       .filter(Boolean);
     return (data?.items ?? []).filter((log) => {
+      if (statusText && !normalizedText(statusLabel(log.status)).includes(statusText) && !normalizedText(log.status).includes(statusText)) {
+        return false;
+      }
       const recipientHaystack = normalizedText(`${log.toEmail} ${log.requestCustomerEmail}`);
       if (recipientText && !recipientHaystack.includes(recipientText)) {
         return false;
       }
       if (excludedRecipientTerms.some((term) => recipientHaystack.includes(term))) {
+        return false;
+      }
+      if (providerText && normalizedText(log.provider) !== providerText) {
+        return false;
+      }
+      if (messageTypeText && normalizedText(log.messageType || log.eventType) !== messageTypeText) {
+        return false;
+      }
+      if (directionText && normalizedText(log.direction) !== directionText) {
+        return false;
+      }
+      if (linkedFilter && linkedKind(log) !== linkedFilter) {
         return false;
       }
       if (searchText) {
@@ -214,7 +274,42 @@ export function EmailLogsPage() {
       }
       return true;
     });
-  }, [data?.items, excludeRecipients, recipient, search]);
+  }, [data?.items, direction, excludeRecipients, linkedFilter, messageType, provider, recipient, search, status]);
+
+  const filterOptions = useMemo(() => {
+    const logs = data?.items ?? [];
+    return {
+      providers: uniqueOptions(logs, (log) => log.provider),
+      messageTypes: uniqueOptions(logs, (log) => log.messageType || log.eventType),
+      directions: uniqueOptions(logs, (log) => log.direction),
+    };
+  }, [data?.items]);
+
+  const visibleSelectableIds = useMemo(
+    () => visibleLogs.map(emailLogDeleteId).filter(Boolean),
+    [visibleLogs],
+  );
+  const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const visibleIdSet = useMemo(() => new Set(visibleSelectableIds), [visibleSelectableIds]);
+  const allVisibleSelected =
+    visibleSelectableIds.length > 0 && visibleSelectableIds.every((id) => selectedIdSet.has(id));
+  const selectedVisibleCount = selectedIds.filter((id) => visibleIdSet.has(id)).length;
+  const activeFilterCount = [
+    search,
+    status,
+    recipient,
+    excludeRecipients,
+    provider,
+    messageType,
+    direction,
+    linkedFilter,
+    dateFrom,
+    dateTo,
+  ].filter(Boolean).length;
+
+  useEffect(() => {
+    setSelectedIds((current) => current.filter((id) => visibleIdSet.has(id)));
+  }, [visibleIdSet]);
 
   const summary = useMemo(() => {
     return visibleLogs.reduce(
@@ -246,34 +341,89 @@ export function EmailLogsPage() {
     setStatus("");
     setRecipient("");
     setExcludeRecipients("");
+    setProvider("");
+    setMessageType("");
+    setDirection("");
+    setLinkedFilter("");
+    setQuickRange("");
     setDateFrom("");
     setDateTo("");
   }
 
-  async function removeLog(log: DashboardEmailLog) {
-    const id = emailLogDeleteId(log);
-    if (!id) {
-      notify("This email log has no stable ID to delete.", "error");
+  function applyQuickRange(value: string) {
+    setQuickRange(value);
+    if (!value) {
+      setDateFrom("");
+      setDateTo("");
       return;
     }
-    const label = log.subject || log.toEmail || "this email log";
-    if (!window.confirm(`Delete ${label} from this dashboard? This hides the live log locally and does not modify ZAPP.`)) {
+    const days = value === "24h" ? 1 : value === "7d" ? 7 : value === "30d" ? 30 : 90;
+    setDateFrom(inputDateFromDaysAgo(days));
+    setDateTo(todayInputDate());
+  }
+
+  function toggleLogSelection(log: DashboardEmailLog) {
+    const id = emailLogDeleteId(log);
+    if (!id) {
+      notify("This email log has no stable ID to select.", "error");
+      return;
+    }
+    setSelectedIds((current) => (
+      current.includes(id) ? current.filter((value) => value !== id) : [...current, id]
+    ));
+  }
+
+  function toggleAllVisible() {
+    if (allVisibleSelected) {
+      setSelectedIds((current) => current.filter((id) => !visibleIdSet.has(id)));
+      return;
+    }
+    setSelectedIds((current) => Array.from(new Set([...current, ...visibleSelectableIds])));
+  }
+
+  async function removeLogs(ids: string[], confirmMessage: string) {
+    const normalizedIds = Array.from(new Set(ids.map((id) => id.trim()).filter(Boolean)));
+    if (normalizedIds.length === 0) {
+      notify("No selectable email logs found.", "error");
+      return;
+    }
+    if (!window.confirm(confirmMessage)) {
       return;
     }
 
-    setDeletingId(id);
+    setBulkDeleting(normalizedIds.length > 1);
+    setDeletingId(normalizedIds.length === 1 ? normalizedIds[0] : "__bulk__");
     try {
-      await deleteEmailLog(id);
-      setSelected((current) => (current && emailLogDeleteId(current) === id ? null : current));
+      if (normalizedIds.length === 1) {
+        await deleteEmailLog(normalizedIds[0]);
+      } else {
+        await deleteEmailLogs(normalizedIds);
+      }
+      setSelectedIds((current) => current.filter((id) => !normalizedIds.includes(id)));
+      setSelected((current) => (current && normalizedIds.includes(emailLogDeleteId(current)) ? null : current));
       await load();
-      notify("Email log deleted from dashboard.", "success");
+      notify(normalizedIds.length === 1 ? "Email log deleted from dashboard." : `${normalizedIds.length} email logs deleted from dashboard.`, "success");
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : "Unable to delete email log.";
+      const message = caught instanceof Error ? caught.message : "Unable to delete email logs.";
       setError(message);
       notify(message, "error");
     } finally {
       setDeletingId("");
+      setBulkDeleting(false);
     }
+  }
+
+  async function removeLog(log: DashboardEmailLog) {
+    const id = emailLogDeleteId(log);
+    const label = log.subject || log.toEmail || "this email log";
+    await removeLogs([id], `Delete ${label} from this dashboard? This hides the live log locally and does not modify ZAPP.`);
+  }
+
+  async function removeSelectedLogs() {
+    await removeLogs(
+      selectedIds,
+      `Delete ${selectedIds.length} selected email log${selectedIds.length === 1 ? "" : "s"} from this dashboard? This hides the live logs locally and does not modify ZAPP.`,
+    );
   }
 
   function exportLogs() {
@@ -297,7 +447,7 @@ export function EmailLogsPage() {
   }
 
   return (
-    <div className="mx-auto max-w-7xl space-y-5">
+    <div className="mx-auto w-full min-w-0 max-w-7xl space-y-5 overflow-x-hidden">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <div className="flex flex-wrap items-center gap-2">
@@ -331,53 +481,123 @@ export function EmailLogsPage() {
       </div>
 
       <Card>
-        <CardContent className="space-y-3 p-4">
-          <div className="grid gap-3 xl:grid-cols-[minmax(300px,1.4fr)_160px_190px_230px_150px_150px_auto]">
-            <label className="relative block">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <input
-                className={cn(inputClass, "pl-9")}
-                placeholder="Search by subject, recipient, provider, or request..."
-                value={searchInput}
-                onChange={(event) => setSearchInput(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") applySearch();
-                }}
-              />
-            </label>
-            <select className={inputClass} value={status} onChange={(event) => setStatus(event.target.value)}>
-              <option value="">All statuses</option>
-              <option value="sent">Sent</option>
-              <option value="delivered">Delivered</option>
-              <option value="pending">Pending</option>
-              <option value="failed">Failed</option>
-              <option value="queued">Queued</option>
-              <option value="bounced">Bounced</option>
-            </select>
-            <input
-              className={inputClass}
-              placeholder="Recipient contains"
-              title="Show emails sent to this recipient or domain"
-              value={recipient}
-              onChange={(event) => setRecipient(event.target.value)}
-            />
-            <input
-              className={inputClass}
-              placeholder="Hide recipients, comma-separated"
-              title="Hide emails sent to these recipients or domains"
-              value={excludeRecipients}
-              onChange={(event) => setExcludeRecipients(event.target.value)}
-            />
-            <DateInput label="Start date" value={dateFrom} onChange={setDateFrom} />
-            <DateInput label="End date" value={dateTo} onChange={setDateTo} />
-            <div className="flex gap-2">
-              <Button className="flex-1 xl:flex-none" onClick={applySearch}>Search</Button>
-              <Button variant="outline" onClick={clearFilters}>
-                <X className="h-4 w-4" />
-                Clear
-              </Button>
-            </div>
+        <CardHeader className="flex flex-col gap-3 border-b p-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex items-center gap-2">
+            <Filter className="h-4 w-4 text-muted-foreground" />
+            <CardTitle className="text-base">Filters</CardTitle>
+            <Badge variant={activeFilterCount ? "warning" : "muted"}>
+              {activeFilterCount ? `${activeFilterCount} active` : "No filters"}
+            </Badge>
           </div>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" onClick={() => setAdvancedOpen((open) => !open)}>
+              <SlidersHorizontal className="h-4 w-4" />
+              Advanced
+              <ChevronDown className={cn("h-4 w-4 transition", advancedOpen && "rotate-180")} />
+            </Button>
+            <Button onClick={applySearch}>
+              <Search className="h-4 w-4" />
+              Apply
+            </Button>
+            <Button variant="outline" onClick={clearFilters}>
+              <X className="h-4 w-4" />
+              Clear
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="min-w-0 space-y-4 p-4">
+          <div className="grid min-w-0 grid-cols-1 gap-3 lg:grid-cols-12">
+            <FilterField className="lg:col-span-6" label="Search">
+              <label className="relative block">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <input
+                  className={cn(inputClass, "pl-9")}
+                  placeholder="Subject, recipient, provider, request, or order"
+                  value={searchInput}
+                  onChange={(event) => setSearchInput(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") applySearch();
+                  }}
+                />
+              </label>
+            </FilterField>
+            <FilterField className="sm:col-span-1 lg:col-span-3" label="Status">
+              <select className={inputClass} value={status} onChange={(event) => setStatus(event.target.value)}>
+                <option value="">All statuses</option>
+                <option value="sent">Sent</option>
+                <option value="delivered">Delivered</option>
+                <option value="pending">Pending</option>
+                <option value="failed">Failed</option>
+                <option value="queued">Queued</option>
+                <option value="bounced">Bounced</option>
+              </select>
+            </FilterField>
+            <FilterField className="sm:col-span-1 lg:col-span-3" label="Quick date">
+              <select className={inputClass} value={quickRange} onChange={(event) => applyQuickRange(event.target.value)}>
+                <option value="">Custom / all time</option>
+                <option value="24h">Last 24 hours</option>
+                <option value="7d">Last 7 days</option>
+                <option value="30d">Last 30 days</option>
+                <option value="90d">Last 90 days</option>
+              </select>
+            </FilterField>
+            <FilterField className="lg:col-span-4" label="Recipient contains">
+              <input
+                className={inputClass}
+                placeholder="customer@email.com or domain"
+                title="Show emails sent to this recipient or domain"
+                value={recipient}
+                onChange={(event) => setRecipient(event.target.value)}
+              />
+            </FilterField>
+            <FilterField className="lg:col-span-4" label="Hide recipients">
+              <input
+                className={inputClass}
+                placeholder="Comma-separated emails or domains"
+                title="Hide emails sent to these recipients or domains"
+                value={excludeRecipients}
+                onChange={(event) => setExcludeRecipients(event.target.value)}
+              />
+            </FilterField>
+            <FilterField className="lg:col-span-2" label="Start date">
+              <DateInput label="Start date" value={dateFrom} onChange={(value) => { setQuickRange(""); setDateFrom(value); }} />
+            </FilterField>
+            <FilterField className="lg:col-span-2" label="End date">
+              <DateInput label="End date" value={dateTo} onChange={(value) => { setQuickRange(""); setDateTo(value); }} />
+            </FilterField>
+          </div>
+
+          {advancedOpen ? (
+            <div className="grid min-w-0 gap-3 rounded-md border bg-muted/20 p-3 sm:grid-cols-2 xl:grid-cols-4">
+              <FilterField label="Provider">
+                <select className={inputClass} value={provider} onChange={(event) => setProvider(event.target.value)}>
+                  <option value="">All providers</option>
+                  {filterOptions.providers.map((option) => <option key={option} value={option}>{option}</option>)}
+                </select>
+              </FilterField>
+              <FilterField label="Message type">
+                <select className={inputClass} value={messageType} onChange={(event) => setMessageType(event.target.value)}>
+                  <option value="">All message types</option>
+                  {filterOptions.messageTypes.map((option) => <option key={option} value={option}>{option}</option>)}
+                </select>
+              </FilterField>
+              <FilterField label="Direction">
+                <select className={inputClass} value={direction} onChange={(event) => setDirection(event.target.value)}>
+                  <option value="">All directions</option>
+                  {filterOptions.directions.map((option) => <option key={option} value={option}>{option}</option>)}
+                </select>
+              </FilterField>
+              <FilterField label="Linked item">
+                <select className={inputClass} value={linkedFilter} onChange={(event) => setLinkedFilter(event.target.value)}>
+                  <option value="">All linked states</option>
+                  <option value="request">Linked to request</option>
+                  <option value="order">Linked to order</option>
+                  <option value="unlinked">Unlinked only</option>
+                </select>
+              </FilterField>
+            </div>
+          ) : null}
+
           <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
             <span>{visibleLogs.length} shown from {data?.total ?? 0} email log(s)</span>
             <span>Source: {data?.source?.path ?? "ZAPP API"} · HTTP {data?.source?.upstreamStatus ?? "--"} · {safeDisplay(data?.source?.elapsedMs)} ms</span>
@@ -390,6 +610,33 @@ export function EmailLogsPage() {
           <CardContent className="flex items-start gap-3 p-4 text-sm text-orange-700 dark:text-orange-300">
             <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
             <span>{error}</span>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {selectedIds.length > 0 ? (
+        <Card className="border-orange-500/30 bg-orange-500/5">
+          <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-sm font-medium">{selectedIds.length} email log{selectedIds.length === 1 ? "" : "s"} selected</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {selectedVisibleCount} visible in the current filters. Deleting hides the selected live logs from this dashboard only.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" onClick={() => setSelectedIds([])}>
+                Clear selection
+              </Button>
+              <Button
+                className="border border-red-500/30 bg-red-500/10 text-red-700 hover:bg-red-500/20 dark:text-red-300"
+                disabled={bulkDeleting}
+                variant="outline"
+                onClick={removeSelectedLogs}
+              >
+                <Trash2 className="h-4 w-4" />
+                {bulkDeleting ? "Deleting..." : "Delete selected"}
+              </Button>
+            </div>
           </CardContent>
         </Card>
       ) : null}
@@ -418,21 +665,39 @@ export function EmailLogsPage() {
         ) : (
           <>
             <div className="hidden overflow-x-auto xl:block">
-              <table className="w-full min-w-[1120px] table-fixed border-collapse text-left">
+              <table className="w-full min-w-[1180px] table-fixed border-collapse text-left">
                 <thead className="sticky top-0 z-10 border-b bg-muted/70 backdrop-blur">
                   <tr>
+                    <HeaderCell className="w-[52px] text-center">
+                      <input
+                        aria-label="Select all visible email logs"
+                        checked={allVisibleSelected}
+                        disabled={visibleSelectableIds.length === 0}
+                        type="checkbox"
+                        onChange={toggleAllVisible}
+                      />
+                    </HeaderCell>
                     <HeaderCell className="w-[290px]">Message</HeaderCell>
                     <HeaderCell className="w-[245px]">Recipient</HeaderCell>
                     <HeaderCell className="w-[130px]">Status</HeaderCell>
                     <HeaderCell className="w-[130px]">Provider</HeaderCell>
                     <HeaderCell className="w-[210px]">Linked To</HeaderCell>
                     <HeaderCell className="w-[135px]">Date</HeaderCell>
-                    <HeaderCell className="w-[110px] text-center">Action</HeaderCell>
+                    <HeaderCell className="w-[130px] text-center">Action</HeaderCell>
                   </tr>
                 </thead>
                 <tbody className="divide-y">
                   {visibleLogs.map((log) => (
-                    <tr key={log.id || `${log.subject}-${log.createdAt}`} className="h-[76px] transition hover:bg-muted/30">
+                    <tr key={log.id || `${log.subject}-${log.createdAt}`} className={cn("h-[76px] transition hover:bg-muted/30", selectedIdSet.has(emailLogDeleteId(log)) && "bg-orange-500/5")}>
+                      <td className="px-4 py-4 text-center align-middle">
+                        <input
+                          aria-label="Select email log"
+                          checked={selectedIdSet.has(emailLogDeleteId(log))}
+                          disabled={!emailLogDeleteId(log)}
+                          type="checkbox"
+                          onChange={() => toggleLogSelection(log)}
+                        />
+                      </td>
                       <td className="px-4 py-4 align-middle">
                         <MessageCell log={log} />
                       </td>
@@ -466,9 +731,6 @@ export function EmailLogsPage() {
                           >
                             <Trash2 className="h-4 w-4" />
                           </Button>
-                          <Button size="icon" title="More details" variant="ghost" onClick={() => setSelected(log)}>
-                            <MoreHorizontal className="h-4 w-4" />
-                          </Button>
                         </div>
                       </td>
                     </tr>
@@ -482,8 +744,10 @@ export function EmailLogsPage() {
                 <EmailLogCard
                   key={log.id || `${log.subject}-${log.createdAt}`}
                   deleting={deletingId === emailLogDeleteId(log)}
+                  isSelected={selectedIdSet.has(emailLogDeleteId(log))}
                   log={log}
                   onDelete={removeLog}
+                  onSelect={toggleLogSelection}
                   onView={setSelected}
                 />
               ))}
@@ -522,6 +786,15 @@ function SummaryCard({ label, value, tone }: { label: string; value: number; ton
         </p>
       </CardContent>
     </Card>
+  );
+}
+
+function FilterField({ children, className, label }: { children: ReactNode; className?: string; label: string }) {
+  return (
+    <div className={cn("min-w-0 space-y-1.5", className)}>
+      <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">{label}</span>
+      {children}
+    </div>
   );
 }
 
@@ -615,19 +888,33 @@ function DateCell({ value }: { value: string }) {
 
 function EmailLogCard({
   deleting,
+  isSelected,
   log,
   onDelete,
+  onSelect,
   onView,
 }: {
   deleting: boolean;
+  isSelected: boolean;
   log: DashboardEmailLog;
   onDelete: (log: DashboardEmailLog) => void;
+  onSelect: (log: DashboardEmailLog) => void;
   onView: (log: DashboardEmailLog) => void;
 }) {
   return (
-    <div className="rounded-md border bg-background p-4">
+    <div className={cn("rounded-md border bg-background p-4", isSelected && "border-orange-500/30 bg-orange-500/5")}>
       <div className="flex items-start justify-between gap-3">
-        <MessageCell log={log} />
+        <div className="flex min-w-0 items-start gap-3">
+          <input
+            aria-label="Select email log"
+            checked={isSelected}
+            className="mt-1 shrink-0"
+            disabled={!emailLogDeleteId(log)}
+            type="checkbox"
+            onChange={() => onSelect(log)}
+          />
+          <MessageCell log={log} />
+        </div>
         <EmailStatusBadge value={log.status} />
       </div>
       <div className="mt-4 grid gap-3 sm:grid-cols-2">

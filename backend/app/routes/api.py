@@ -7,6 +7,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -20,6 +21,15 @@ router = APIRouter(prefix="/api", tags=["dashboard-api"])
 
 MAX_PAGE_SIZE = 100
 LOCAL_FILTER_FETCH_LIMIT = 1000
+
+
+class EmailLogBulkDeleteRequest(BaseModel):
+    ids: list[str] = Field(min_length=1, max_length=250)
+
+
+class EmailLogBulkDeleteResponse(BaseModel):
+    deleted: int
+    ids: list[str]
 
 
 @router.get("/orders")
@@ -114,6 +124,27 @@ def delete_email_log(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return None
+
+
+@router.post("/email-logs/delete", response_model=EmailLogBulkDeleteResponse)
+def delete_email_logs(
+    payload: EmailLogBulkDeleteRequest,
+    user=Depends(require_roles("admin")),
+    db: Session = Depends(get_db),
+):
+    deleted_ids: list[str] = []
+    seen: set[str] = set()
+    for raw_id in payload.ids:
+        normalized = raw_id.strip()
+        normalized_key = normalized.lower()
+        if not normalized or normalized_key in seen:
+            continue
+        seen.add(normalized_key)
+        crud.mark_email_log_deleted(db, normalized, user_id=user.id)
+        deleted_ids.append(normalized)
+    if not deleted_ids:
+        raise HTTPException(status_code=422, detail="At least one email log ID is required.")
+    return {"deleted": len(deleted_ids), "ids": deleted_ids}
 
 
 async def _fetch_dashboard_collection(

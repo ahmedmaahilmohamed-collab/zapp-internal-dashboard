@@ -697,6 +697,13 @@ export async function deleteEmailLog(id: string) {
   });
 }
 
+export async function deleteEmailLogs(ids: string[]) {
+  return apiRequest<{ deleted: number; ids: string[] }>("/api/email-logs/delete", {
+    method: "POST",
+    body: JSON.stringify({ ids }),
+  });
+}
+
 export async function fetchCurrencies(query: { search?: string; includeInactive?: boolean } = {}) {
   const params = new URLSearchParams();
   if (query.search?.trim()) {
