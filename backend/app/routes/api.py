@@ -315,7 +315,11 @@ def _apply_local_filters(
     status_text = (status or "").strip().lower()
 
     def matches(item: dict[str, Any]) -> bool:
-        if status_text and status_text not in str(item.get("status") or "").lower():
+        status_haystack = " ".join(
+            str(item.get(key) or "")
+            for key in ("status", "quoteStatus", "paymentStatus", "financialStatus", "fulfillmentStatus")
+        )
+        if status_text and _filter_text(status_text) not in _filter_text(status_haystack):
             return False
 
         if search_text:
@@ -339,9 +343,14 @@ def _apply_local_filters(
                     "orderReference",
                     "linkedRequestId",
                     "requestProductTitle",
+                    "productTitle",
+                    "productUrl",
+                    "publicToken",
+                    "paymentStatus",
+                    "quoteStatus",
                 )
-            ).lower()
-            if search_text not in haystack:
+            )
+            if _filter_text(search_text) not in _filter_text(haystack):
                 return False
 
         created_at = _parse_datetime(item.get("createdAt"))
@@ -353,6 +362,10 @@ def _apply_local_filters(
         return True
 
     return [item for item in items if matches(item)]
+
+
+def _filter_text(value: Any) -> str:
+    return str(value or "").strip().lower().replace("_", " ").replace("-", " ")
 
 
 def _attach_finance_summaries(
