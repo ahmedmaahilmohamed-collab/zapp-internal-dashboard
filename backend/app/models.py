@@ -51,6 +51,14 @@ class ShippingRateCard(TimestampMixin, Base):
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
+class EmailLogDeletion(TimestampMixin, Base):
+    __tablename__ = "email_log_deletions"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    email_log_id: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
+    deleted_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("user_access.id", ondelete="SET NULL"), nullable=True)
+
+
 class InternalCostRecord(TimestampMixin, Base):
     __tablename__ = "internal_cost_records"
 

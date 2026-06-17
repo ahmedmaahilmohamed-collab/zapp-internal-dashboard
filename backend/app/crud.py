@@ -151,6 +151,38 @@ def deactivate_shipping_rate(db: Session, rate_id: int):
     return _commit_refresh(db, rate)
 
 
+def delete_shipping_rate(db: Session, rate_id: int):
+    rate = db.get(models.ShippingRateCard, rate_id)
+    if rate is None:
+        return None
+    db.delete(rate)
+    db.commit()
+    return rate
+
+
+def list_deleted_email_log_ids(db: Session) -> set[str]:
+    values = db.scalars(select(models.EmailLogDeletion.email_log_id)).all()
+    return {str(value).strip().lower() for value in values if str(value or "").strip()}
+
+
+def mark_email_log_deleted(db: Session, email_log_id: str, user_id: int | None = None):
+    normalized = email_log_id.strip()
+    if not normalized:
+        raise ValueError("Email log ID is required.")
+
+    existing = db.scalar(
+        select(models.EmailLogDeletion).where(
+            func.lower(models.EmailLogDeletion.email_log_id) == normalized.lower()
+        )
+    )
+    if existing is not None:
+        return existing
+
+    deletion = models.EmailLogDeletion(email_log_id=normalized, deleted_by_user_id=user_id)
+    db.add(deletion)
+    return _commit_refresh(db, deletion)
+
+
 def list_costs(db: Session, search: str | None = None, currency: str | None = None):
     statement: Select = select(models.InternalCostRecord).order_by(models.InternalCostRecord.updated_at.desc())
     if search:

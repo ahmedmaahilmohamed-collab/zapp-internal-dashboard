@@ -218,6 +218,8 @@ export interface DashboardEmailLog {
 export interface CollectionQuery {
   search?: string;
   status?: string;
+  recipient?: string;
+  excludeRecipients?: string;
   dateFrom?: string;
   dateTo?: string;
   page?: number;
@@ -689,6 +691,12 @@ export async function fetchEmailLogs(
   return fetchCollection<DashboardEmailLog>("/api/email-logs", query);
 }
 
+export async function deleteEmailLog(id: string) {
+  return apiRequest<void>(`/api/email-logs/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+}
+
 export async function fetchCurrencies(query: { search?: string; includeInactive?: boolean } = {}) {
   const params = new URLSearchParams();
   if (query.search?.trim()) {
@@ -759,7 +767,7 @@ export async function updateShippingRate(id: number, payload: Partial<ShippingRa
 }
 
 export async function deleteShippingRate(id: number) {
-  return apiRequest<ShippingRateRecord>(`/api/shipping-rates/${id}`, {
+  return apiRequest<void>(`/api/shipping-rates/${id}`, {
     method: "DELETE",
   });
 }
@@ -862,6 +870,12 @@ async function fetchCollection<T>(
   }
   if (query.status?.trim()) {
     params.set("status", query.status.trim());
+  }
+  if (query.recipient?.trim()) {
+    params.set("recipient", query.recipient.trim());
+  }
+  if (query.excludeRecipients?.trim()) {
+    params.set("exclude_recipients", query.excludeRecipients.trim());
   }
   if (query.dateFrom) {
     params.set("date_from", query.dateFrom);

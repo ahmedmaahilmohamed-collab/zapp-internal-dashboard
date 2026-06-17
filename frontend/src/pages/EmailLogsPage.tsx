@@ -8,13 +8,14 @@ import {
   MoreHorizontal,
   RefreshCcw,
   Search,
+  Trash2,
   X,
 } from "lucide-react";
 
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
-import { DashboardCollectionResponse, DashboardEmailLog, fetchEmailLogs } from "../lib/api";
+import { DashboardCollectionResponse, DashboardEmailLog, deleteEmailLog, fetchEmailLogs } from "../lib/api";
 import { useToast } from "../lib/toast-context";
 import { cn, downloadCsv, safeDisplay } from "../lib/utils";
 
@@ -126,17 +127,24 @@ function linkedDisplay(log: DashboardEmailLog) {
   };
 }
 
+function emailLogDeleteId(log: DashboardEmailLog) {
+  return (log.id || log.source?.sourceId || "").trim();
+}
+
 export function EmailLogsPage() {
   const { notify } = useToast();
   const [data, setData] = useState<DashboardCollectionResponse<DashboardEmailLog> | null>(null);
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
+  const [recipient, setRecipient] = useState("");
+  const [excludeRecipients, setExcludeRecipients] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [selected, setSelected] = useState<DashboardEmailLog | null>(null);
+  const [deletingId, setDeletingId] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -146,6 +154,8 @@ export function EmailLogsPage() {
         await fetchEmailLogs({
           search,
           status,
+          recipient,
+          excludeRecipients,
           dateFrom,
           dateTo,
           page: 1,
@@ -159,7 +169,7 @@ export function EmailLogsPage() {
     } finally {
       setLoading(false);
     }
-  }, [dateFrom, dateTo, notify, search, status]);
+  }, [dateFrom, dateTo, excludeRecipients, notify, recipient, search, status]);
 
   useEffect(() => {
     void load();
@@ -167,7 +177,19 @@ export function EmailLogsPage() {
 
   const visibleLogs = useMemo(() => {
     const searchText = normalizedText(search);
+    const recipientText = normalizedText(recipient);
+    const excludedRecipientTerms = excludeRecipients
+      .split(",")
+      .map((value) => normalizedText(value))
+      .filter(Boolean);
     return (data?.items ?? []).filter((log) => {
+      const recipientHaystack = normalizedText(`${log.toEmail} ${log.requestCustomerEmail}`);
+      if (recipientText && !recipientHaystack.includes(recipientText)) {
+        return false;
+      }
+      if (excludedRecipientTerms.some((term) => recipientHaystack.includes(term))) {
+        return false;
+      }
       if (searchText) {
         const linked = linkedDisplay(log);
         const haystack = normalizedText(
@@ -192,7 +214,7 @@ export function EmailLogsPage() {
       }
       return true;
     });
-  }, [data?.items, search]);
+  }, [data?.items, excludeRecipients, recipient, search]);
 
   const summary = useMemo(() => {
     return visibleLogs.reduce(
@@ -222,8 +244,36 @@ export function EmailLogsPage() {
     setSearchInput("");
     setSearch("");
     setStatus("");
+    setRecipient("");
+    setExcludeRecipients("");
     setDateFrom("");
     setDateTo("");
+  }
+
+  async function removeLog(log: DashboardEmailLog) {
+    const id = emailLogDeleteId(log);
+    if (!id) {
+      notify("This email log has no stable ID to delete.", "error");
+      return;
+    }
+    const label = log.subject || log.toEmail || "this email log";
+    if (!window.confirm(`Delete ${label} from this dashboard? This hides the live log locally and does not modify ZAPP.`)) {
+      return;
+    }
+
+    setDeletingId(id);
+    try {
+      await deleteEmailLog(id);
+      setSelected((current) => (current && emailLogDeleteId(current) === id ? null : current));
+      await load();
+      notify("Email log deleted from dashboard.", "success");
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : "Unable to delete email log.";
+      setError(message);
+      notify(message, "error");
+    } finally {
+      setDeletingId("");
+    }
   }
 
   function exportLogs() {
@@ -282,7 +332,7 @@ export function EmailLogsPage() {
 
       <Card>
         <CardContent className="space-y-3 p-4">
-          <div className="grid gap-3 xl:grid-cols-[minmax(360px,1.5fr)_180px_160px_160px_auto]">
+          <div className="grid gap-3 xl:grid-cols-[minmax(300px,1.4fr)_160px_190px_230px_150px_150px_auto]">
             <label className="relative block">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <input
@@ -304,6 +354,20 @@ export function EmailLogsPage() {
               <option value="queued">Queued</option>
               <option value="bounced">Bounced</option>
             </select>
+            <input
+              className={inputClass}
+              placeholder="Recipient contains"
+              title="Show emails sent to this recipient or domain"
+              value={recipient}
+              onChange={(event) => setRecipient(event.target.value)}
+            />
+            <input
+              className={inputClass}
+              placeholder="Hide recipients, comma-separated"
+              title="Hide emails sent to these recipients or domains"
+              value={excludeRecipients}
+              onChange={(event) => setExcludeRecipients(event.target.value)}
+            />
             <DateInput label="Start date" value={dateFrom} onChange={setDateFrom} />
             <DateInput label="End date" value={dateTo} onChange={setDateTo} />
             <div className="flex gap-2">
@@ -393,6 +457,15 @@ export function EmailLogsPage() {
                             <Eye className="h-3.5 w-3.5" />
                             View
                           </Button>
+                          <Button
+                            disabled={deletingId === emailLogDeleteId(log)}
+                            size="icon"
+                            title="Delete from dashboard"
+                            variant="ghost"
+                            onClick={() => removeLog(log)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
                           <Button size="icon" title="More details" variant="ghost" onClick={() => setSelected(log)}>
                             <MoreHorizontal className="h-4 w-4" />
                           </Button>
@@ -406,14 +479,27 @@ export function EmailLogsPage() {
 
             <div className="grid gap-3 p-4 xl:hidden">
               {visibleLogs.map((log) => (
-                <EmailLogCard key={log.id || `${log.subject}-${log.createdAt}`} log={log} onView={setSelected} />
+                <EmailLogCard
+                  key={log.id || `${log.subject}-${log.createdAt}`}
+                  deleting={deletingId === emailLogDeleteId(log)}
+                  log={log}
+                  onDelete={removeLog}
+                  onView={setSelected}
+                />
               ))}
             </div>
           </>
         )}
       </Card>
 
-      {selected ? <EmailLogDetails log={selected} onClose={() => setSelected(null)} /> : null}
+      {selected ? (
+        <EmailLogDetails
+          deleting={deletingId === emailLogDeleteId(selected)}
+          log={selected}
+          onClose={() => setSelected(null)}
+          onDelete={removeLog}
+        />
+      ) : null}
     </div>
   );
 }
@@ -527,7 +613,17 @@ function DateCell({ value }: { value: string }) {
   );
 }
 
-function EmailLogCard({ log, onView }: { log: DashboardEmailLog; onView: (log: DashboardEmailLog) => void }) {
+function EmailLogCard({
+  deleting,
+  log,
+  onDelete,
+  onView,
+}: {
+  deleting: boolean;
+  log: DashboardEmailLog;
+  onDelete: (log: DashboardEmailLog) => void;
+  onView: (log: DashboardEmailLog) => void;
+}) {
   return (
     <div className="rounded-md border bg-background p-4">
       <div className="flex items-start justify-between gap-3">
@@ -540,10 +636,14 @@ function EmailLogCard({ log, onView }: { log: DashboardEmailLog; onView: (log: D
         <InfoBlock label="Provider"><span className="text-sm">{safeDisplay(log.provider)}</span></InfoBlock>
         <InfoBlock label="Date"><DateCell value={log.createdAt} /></InfoBlock>
       </div>
-      <div className="mt-4 flex justify-end">
+      <div className="mt-4 flex justify-end gap-2">
         <Button size="sm" variant="outline" onClick={() => onView(log)}>
           <Eye className="h-3.5 w-3.5" />
           View
+        </Button>
+        <Button disabled={deleting} size="sm" variant="outline" onClick={() => onDelete(log)}>
+          <Trash2 className="h-3.5 w-3.5" />
+          Delete
         </Button>
       </div>
     </div>
@@ -559,7 +659,17 @@ function InfoBlock({ label, children }: { label: string; children: ReactNode }) 
   );
 }
 
-function EmailLogDetails({ log, onClose }: { log: DashboardEmailLog; onClose: () => void }) {
+function EmailLogDetails({
+  deleting,
+  log,
+  onClose,
+  onDelete,
+}: {
+  deleting: boolean;
+  log: DashboardEmailLog;
+  onClose: () => void;
+  onDelete: (log: DashboardEmailLog) => void;
+}) {
   const fields: Array<[string, ReactNode]> = [
     ["Log ID", safeDisplay(log.id)],
     ["Status", <EmailStatusBadge key="status" value={log.status} />],
@@ -598,9 +708,15 @@ function EmailLogDetails({ log, onClose }: { log: DashboardEmailLog; onClose: ()
               {safeDisplay(log.toEmail, "Recipient")} · {dateParts(log.createdAt).date}
             </p>
           </div>
-          <Button aria-label="Close details" size="icon" variant="ghost" onClick={onClose}>
-            <X className="h-4 w-4" />
-          </Button>
+          <div className="flex shrink-0 gap-2">
+            <Button disabled={deleting} size="sm" variant="outline" onClick={() => onDelete(log)}>
+              <Trash2 className="h-3.5 w-3.5" />
+              Delete
+            </Button>
+            <Button aria-label="Close details" size="icon" variant="ghost" onClick={onClose}>
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
         </div>
         <div className="grid gap-3 p-5 sm:grid-cols-2">
           {fields.map(([label, value]) => (

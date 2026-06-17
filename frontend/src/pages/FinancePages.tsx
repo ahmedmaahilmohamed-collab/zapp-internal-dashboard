@@ -595,7 +595,15 @@ export function ShippingRatesPage() {
   const { notify } = useToast();
   const [records, setRecords] = useState<ShippingRateRecord[]>([]);
   const [currencies, setCurrencies] = useState<CurrencyRecord[]>([]);
-  const [filters, setFilters] = useState({ search: "", destinationCountry: "", carrier: "", currency: "", includeInactive: true });
+  const [filters, setFilters] = useState({
+    search: "",
+    originCountry: "",
+    destinationCountry: "",
+    carrier: "",
+    serviceLevel: "",
+    currency: "",
+    state: "active",
+  });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [editing, setEditing] = useState<ShippingRateRecord | null>(null);
@@ -609,7 +617,13 @@ export function ShippingRatesPage() {
     setError("");
     try {
       const [rates, activeCurrencies] = await Promise.all([
-        fetchShippingRates(filters),
+        fetchShippingRates({
+          search: filters.search,
+          destinationCountry: filters.destinationCountry,
+          carrier: filters.carrier,
+          currency: filters.currency,
+          includeInactive: filters.state !== "active",
+        }),
         fetchCurrencies({ includeInactive: false }),
       ]);
       setRecords(rates);
@@ -624,6 +638,26 @@ export function ShippingRatesPage() {
   }, [filters, notify]);
 
   useEffect(() => { void load(); }, [load]);
+
+  const visibleRates = useMemo(() => {
+    const origin = filters.originCountry.trim().toLowerCase();
+    const service = filters.serviceLevel.trim().toLowerCase();
+    return records.filter((record) => {
+      if (origin && !record.origin_country.toLowerCase().includes(origin)) {
+        return false;
+      }
+      if (service && !record.service_level.toLowerCase().includes(service)) {
+        return false;
+      }
+      if (filters.state === "active" && !record.is_active) {
+        return false;
+      }
+      if (filters.state === "inactive" && record.is_active) {
+        return false;
+      }
+      return true;
+    });
+  }, [filters.originCountry, filters.serviceLevel, filters.state, records]);
 
   function openCreate() {
     setEditing(null);
@@ -693,16 +727,16 @@ export function ShippingRatesPage() {
     }
   }
 
-  async function deactivateShippingRate(id: number) {
-    if (!window.confirm("Deactivate this shipping rate card?")) {
+  async function removeShippingRate(record: ShippingRateRecord) {
+    if (!window.confirm(`Permanently delete ${record.name}? This removes the shipping rate from the dashboard database.`)) {
       return;
     }
     try {
-      await deleteShippingRate(id);
+      await deleteShippingRate(record.id);
       await load();
-      notify("Shipping rate deactivated.", "success");
+      notify("Shipping rate deleted.", "success");
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : "Unable to deactivate shipping rate.";
+      const message = caught instanceof Error ? caught.message : "Unable to delete shipping rate.";
       setError(message);
       notify(message, "error");
     }
@@ -711,7 +745,7 @@ export function ShippingRatesPage() {
   function exportShippingRates() {
     exportRows(
       "shipping-rates.csv",
-      records.map((record) => ({
+      visibleRates.map((record) => ({
         name: record.name,
         origin_country: record.origin_country,
         destination_country: record.destination_country,
@@ -741,34 +775,44 @@ export function ShippingRatesPage() {
         onRefresh={load}
       />
       <Card>
-        <CardContent className="grid gap-3 p-4 lg:grid-cols-5">
-          <input className={inputClass} placeholder="Search" value={filters.search} onChange={(e) => setFilters({ ...filters, search: e.target.value })} />
+        <CardContent className="grid gap-3 p-4 lg:grid-cols-4 xl:grid-cols-8">
+          <input className={inputClass} placeholder="Search rate, route, carrier" value={filters.search} onChange={(e) => setFilters({ ...filters, search: e.target.value })} />
+          <input className={inputClass} placeholder="Origin" value={filters.originCountry} onChange={(e) => setFilters({ ...filters, originCountry: e.target.value })} />
           <input className={inputClass} placeholder="Destination" value={filters.destinationCountry} onChange={(e) => setFilters({ ...filters, destinationCountry: e.target.value })} />
           <input className={inputClass} placeholder="Carrier" value={filters.carrier} onChange={(e) => setFilters({ ...filters, carrier: e.target.value })} />
+          <input className={inputClass} placeholder="Service" value={filters.serviceLevel} onChange={(e) => setFilters({ ...filters, serviceLevel: e.target.value })} />
           <CurrencySelect
             includeAll
             currencies={currencies}
             value={filters.currency}
             onChange={(value) => setFilters({ ...filters, currency: value })}
           />
-          <label className="flex h-9 items-center gap-2 rounded-md border px-3 text-sm">
-            <input checked={filters.includeInactive} type="checkbox" onChange={(e) => setFilters({ ...filters, includeInactive: e.target.checked })} />
-            Include inactive
-          </label>
+          <select className={inputClass} value={filters.state} onChange={(e) => setFilters({ ...filters, state: e.target.value })}>
+            <option value="active">Active only</option>
+            <option value="inactive">Inactive only</option>
+            <option value="all">All states</option>
+          </select>
+          <Button variant="outline" onClick={() => setFilters({ search: "", originCountry: "", destinationCountry: "", carrier: "", serviceLevel: "", currency: "", state: "active" })}>
+            <X className="h-4 w-4" />
+            Clear
+          </Button>
         </CardContent>
       </Card>
       {error ? <ErrorBanner error={error} onRetry={load} /> : null}
       <Card className="overflow-hidden">
-        <CardHeader className="border-b p-4"><CardTitle>Rate Cards</CardTitle></CardHeader>
-        {loading ? <CardContent className="space-y-3 p-4">{[0,1,2].map((i)=><div key={i} className="h-14 animate-pulse rounded-md bg-muted" />)}</CardContent> : records.length === 0 ? <EmptyState label="shipping rates" /> : (
+        <CardHeader className="flex flex-row items-center justify-between gap-3 border-b p-4">
+          <CardTitle>Rate Cards</CardTitle>
+          <Badge variant="muted">{visibleRates.length} shown</Badge>
+        </CardHeader>
+        {loading ? <CardContent className="space-y-3 p-4">{[0,1,2].map((i)=><div key={i} className="h-14 animate-pulse rounded-md bg-muted" />)}</CardContent> : visibleRates.length === 0 ? <EmptyState label="shipping rates" /> : (
           <>
             <div className="hidden overflow-x-auto md:block">
               <table className="w-full text-left text-xs">
                 <thead className="bg-muted/50 text-[10px] uppercase tracking-wider text-muted-foreground"><tr><th className="px-4 py-3">Name</th><th className="px-4 py-3">Route</th><th className="px-4 py-3">Weight</th><th className="px-4 py-3">Rate</th><th className="px-4 py-3">ETA</th><th className="px-4 py-3">State</th><th className="px-4 py-3 text-right">Actions</th></tr></thead>
-                <tbody className="divide-y">{records.map((record)=><tr key={record.id} className="hover:bg-muted/30"><td className="px-4 py-3 font-medium">{record.name}<p className="mt-1 text-muted-foreground">{record.carrier} · {record.service_level || "Standard"}</p></td><td className="px-4 py-3">{record.origin_country} to {record.destination_country}</td><td className="px-4 py-3">{record.min_weight}-{record.max_weight} kg</td><td className="px-4 py-3">{formatCurrency(Number(record.rate), record.currency)}/kg</td><td className="px-4 py-3">{safeDisplay(record.estimated_days_min)}-{safeDisplay(record.estimated_days_max)} days</td><td className="px-4 py-3"><ActiveBadge active={record.is_active} /></td><td className="px-4 py-3"><div className="flex justify-end gap-2"><Button size="icon" variant="ghost" onClick={() => openEdit(record)}><Pencil className="h-4 w-4" /></Button><Button size="icon" variant="ghost" onClick={() => deactivateShippingRate(record.id)}><Trash2 className="h-4 w-4" /></Button></div></td></tr>)}</tbody>
+                <tbody className="divide-y">{visibleRates.map((record)=><tr key={record.id} className="hover:bg-muted/30"><td className="px-4 py-3 font-medium">{record.name}<p className="mt-1 text-muted-foreground">{record.carrier} · {record.service_level || "Standard"}</p></td><td className="px-4 py-3">{record.origin_country} to {record.destination_country}</td><td className="px-4 py-3">{record.min_weight}-{record.max_weight} kg</td><td className="px-4 py-3">{formatCurrency(Number(record.rate), record.currency)}/kg</td><td className="px-4 py-3">{safeDisplay(record.estimated_days_min)}-{safeDisplay(record.estimated_days_max)} days</td><td className="px-4 py-3"><ActiveBadge active={record.is_active} /></td><td className="px-4 py-3"><div className="flex justify-end gap-2"><Button size="icon" variant="ghost" onClick={() => openEdit(record)}><Pencil className="h-4 w-4" /></Button><Button size="icon" title="Delete shipping rate" variant="ghost" onClick={() => removeShippingRate(record)}><Trash2 className="h-4 w-4" /></Button></div></td></tr>)}</tbody>
               </table>
             </div>
-            <div className="grid gap-3 p-4 md:hidden">{records.map((record)=><div key={record.id} className="rounded-md border p-4"><div className="flex items-start justify-between"><div><p className="font-semibold">{record.name}</p><p className="mt-1 text-xs text-muted-foreground">{record.origin_country} to {record.destination_country}</p></div><ActiveBadge active={record.is_active} /></div><p className="mt-3 text-sm">{record.min_weight}-{record.max_weight} kg · {formatCurrency(Number(record.rate), record.currency)}/kg</p><div className="mt-3 flex gap-2"><Button size="sm" variant="outline" onClick={() => openEdit(record)}>Edit</Button><Button size="sm" variant="outline" onClick={() => deactivateShippingRate(record.id)}>Deactivate</Button></div></div>)}</div>
+            <div className="grid gap-3 p-4 md:hidden">{visibleRates.map((record)=><div key={record.id} className="rounded-md border p-4"><div className="flex items-start justify-between"><div><p className="font-semibold">{record.name}</p><p className="mt-1 text-xs text-muted-foreground">{record.origin_country} to {record.destination_country}</p></div><ActiveBadge active={record.is_active} /></div><p className="mt-3 text-sm">{record.min_weight}-{record.max_weight} kg · {formatCurrency(Number(record.rate), record.currency)}/kg</p><div className="mt-3 flex gap-2"><Button size="sm" variant="outline" onClick={() => openEdit(record)}>Edit</Button><Button size="sm" variant="outline" onClick={() => removeShippingRate(record)}>Delete</Button></div></div>)}</div>
           </>
         )}
       </Card>

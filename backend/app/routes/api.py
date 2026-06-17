@@ -5,7 +5,7 @@ from decimal import Decimal
 from math import ceil
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -78,11 +78,14 @@ async def requests(
 async def email_logs(
     search: str | None = Query(default=None),
     status: str | None = Query(default=None),
+    recipient: str | None = Query(default=None),
+    exclude_recipients: str | None = Query(default=None),
     date_from: date | None = Query(default=None),
     date_to: date | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=MAX_PAGE_SIZE),
     _user=Depends(require_roles("admin")),
+    db: Session = Depends(get_db),
 ):
     return await _fetch_dashboard_collection(
         path="/api/internal/email-logs",
@@ -90,11 +93,27 @@ async def email_logs(
         normalizer=normalize_email_log,
         search=search,
         status=status,
+        recipient=recipient,
+        exclude_recipients=exclude_recipients,
+        excluded_ids={_filter_text(value) for value in crud.list_deleted_email_log_ids(db)},
         date_from=date_from,
         date_to=date_to,
         page=page,
         page_size=page_size,
     )
+
+
+@router.delete("/email-logs/{log_id:path}", status_code=204)
+def delete_email_log(
+    log_id: str,
+    user=Depends(require_roles("admin")),
+    db: Session = Depends(get_db),
+):
+    try:
+        crud.mark_email_log_deleted(db, log_id, user_id=user.id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return None
 
 
 async def _fetch_dashboard_collection(
@@ -106,10 +125,13 @@ async def _fetch_dashboard_collection(
     db: Session | None = None,
     search: str | None,
     status: str | None,
-    date_from: date | None,
-    date_to: date | None,
-    page: int,
-    page_size: int,
+    recipient: str | None = None,
+    exclude_recipients: str | None = None,
+    excluded_ids: set[str] | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    page: int = 1,
+    page_size: int = MAX_PAGE_SIZE,
 ) -> dict[str, Any] | JSONResponse:
     settings = get_settings()
     client = ZappApiClient(
@@ -144,6 +166,9 @@ async def _fetch_dashboard_collection(
         normalized,
         search=search,
         status=status,
+        recipient=recipient,
+        exclude_recipients=exclude_recipients,
+        excluded_ids=excluded_ids,
         date_from=date_from,
         date_to=date_to,
     )
@@ -311,18 +336,43 @@ def _apply_local_filters(
     *,
     search: str | None,
     status: str | None,
+    recipient: str | None = None,
+    exclude_recipients: str | None = None,
+    excluded_ids: set[str] | None = None,
     date_from: date | None,
     date_to: date | None,
 ) -> list[dict[str, Any]]:
     search_text = (search or "").strip().lower()
     status_text = (status or "").strip().lower()
+    recipient_text = _filter_text(recipient)
+    excluded_recipient_terms = [
+        _filter_text(value)
+        for value in (exclude_recipients or "").replace("\n", ",").split(",")
+        if _filter_text(value)
+    ]
+    deleted_ids = excluded_ids or set()
 
     def matches(item: dict[str, Any]) -> bool:
+        item_ids = {
+            _filter_text(item.get("id")),
+            _filter_text((item.get("source") or {}).get("sourceId") if isinstance(item.get("source"), dict) else None),
+        }
+        if deleted_ids.intersection({value for value in item_ids if value}):
+            return False
+
         status_haystack = " ".join(
             str(item.get(key) or "")
             for key in ("status", "quoteStatus", "paymentStatus", "financialStatus", "fulfillmentStatus")
         )
         if status_text and _filter_text(status_text) not in _filter_text(status_haystack):
+            return False
+
+        recipient_haystack = _filter_text(
+            " ".join(str(item.get(key) or "") for key in ("toEmail", "requestCustomerEmail"))
+        )
+        if recipient_text and recipient_text not in recipient_haystack:
+            return False
+        if excluded_recipient_terms and any(term in recipient_haystack for term in excluded_recipient_terms):
             return False
 
         if search_text:

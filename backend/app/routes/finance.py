@@ -106,16 +106,16 @@ def put_shipping_rate(
     return rate
 
 
-@router.delete("/shipping-rates/{rate_id}", response_model=schemas.ShippingRateRead)
+@router.delete("/shipping-rates/{rate_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_shipping_rate(
     rate_id: int,
     _user=Depends(require_roles("admin", "manager")),
     db: Session = Depends(get_db),
 ):
-    rate = crud.deactivate_shipping_rate(db, rate_id)
+    rate = crud.delete_shipping_rate(db, rate_id)
     if rate is None:
         raise HTTPException(status_code=404, detail="Shipping rate not found.")
-    return rate
+    return None
 
 
 @router.get("/costs", response_model=list[schemas.CostRead])
