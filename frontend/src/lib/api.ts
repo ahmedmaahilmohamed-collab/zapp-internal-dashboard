@@ -197,6 +197,7 @@ export interface DashboardEmailLog {
   resendEmailId: string;
   webhookDeliveryId: string;
   linkedRequestId: string;
+  linkedOrderId: string;
   requestPublicToken: string;
   orderReference: string;
   requestCustomerName: string;
@@ -204,6 +205,7 @@ export interface DashboardEmailLog {
   requestProductTitle: string;
   requestStatus: string;
   errorMessage: string;
+  bodyPreview: string;
   metadataSummary: string;
   createdAt: string;
   updatedAt: string;

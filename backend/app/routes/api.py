@@ -274,6 +274,7 @@ def normalize_email_log(item: dict[str, Any]) -> dict[str, Any]:
     request = _first_dict(item, "request", "purchaseRequest", "purchase_request")
     metadata = _first_dict(item, "metadata", "meta")
     linked_request_id = _first_value(item, "requestId", "request_id") or request.get("id")
+    linked_order_id = _first_value(item, "orderId", "order_id", "shopifyOrderId", "shopify_order_id") or request.get("linkedOrderId") or request.get("shopifyOrderId")
 
     return {
         "id": _safe_str(_first_value(item, "id", "sourceId", "source_id", "emailLogId", "email_log_id")),
@@ -289,6 +290,7 @@ def normalize_email_log(item: dict[str, Any]) -> dict[str, Any]:
         "resendEmailId": _safe_str(_first_value(item, "resendEmailId", "resend_email_id")),
         "webhookDeliveryId": _safe_str(_first_value(item, "webhookDeliveryId", "webhook_delivery_id")),
         "linkedRequestId": _safe_str(linked_request_id),
+        "linkedOrderId": _safe_str(linked_order_id),
         "requestPublicToken": _safe_str(_first_value(item, "requestPublicToken", "request_public_token") or request.get("publicToken")),
         "orderReference": _safe_str(_first_value(item, "orderReference", "order_reference")),
         "requestCustomerName": _safe_str(request.get("customerName")),
@@ -296,6 +298,7 @@ def normalize_email_log(item: dict[str, Any]) -> dict[str, Any]:
         "requestProductTitle": _safe_str(request.get("productTitle")),
         "requestStatus": _safe_str(request.get("status")),
         "errorMessage": _safe_str(_first_value(item, "errorMessage", "error_message", "error")),
+        "bodyPreview": _safe_str(_first_value(item, "bodyPreview", "body_preview", "preview", "snippet", "textPreview", "text_preview")),
         "metadataSummary": _metadata_summary(metadata),
         "createdAt": _safe_date(_first_value(item, "createdAt", "created_at", "sentAt", "sent_at")),
         "updatedAt": _safe_date(_first_value(item, "updatedAt", "updated_at")),
@@ -342,7 +345,13 @@ def _apply_local_filters(
                     "toEmail",
                     "orderReference",
                     "linkedRequestId",
+                    "linkedOrderId",
+                    "requestCustomerName",
+                    "requestCustomerEmail",
                     "requestProductTitle",
+                    "requestPublicToken",
+                    "bodyPreview",
+                    "metadataSummary",
                     "productTitle",
                     "productUrl",
                     "publicToken",
