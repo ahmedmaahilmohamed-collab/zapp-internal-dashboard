@@ -7,7 +7,6 @@ import {
   Download,
   Eye,
   FileText,
-  MessageSquare,
   MoreHorizontal,
   RefreshCcw,
   Search,
@@ -511,7 +510,6 @@ export function RequestsPage() {
                       <td className="px-4 py-4 align-middle">
                         <RowActions
                           request={request}
-                          onMessage={() => readOnlyAction("Message")}
                           onMore={() => readOnlyAction("More actions")}
                           onQuote={() => readOnlyAction("Quote")}
                           onView={setSelected}
@@ -530,7 +528,6 @@ export function RequestsPage() {
                   request={request}
                   onCopy={copyRequestId}
                   onCost={openCostForm}
-                  onMessage={() => readOnlyAction("Message")}
                   onMore={() => readOnlyAction("More actions")}
                   onQuote={() => readOnlyAction("Quote")}
                   onView={setSelected}
@@ -625,7 +622,7 @@ function CustomerCell({ request }: { request: DashboardRequest }) {
 function LargeStatusBadge({ value }: { value: string }) {
   return (
     <Badge
-      className="flex h-8 min-w-[120px] justify-center rounded-full px-3 normal-case tracking-normal"
+      className="flex h-7 min-w-[112px] justify-center rounded-md px-3 normal-case tracking-normal"
       variant={statusTone(value)}
     >
       {labelFromStatus(value)}
@@ -709,13 +706,11 @@ function formatRequestDate(value: string | undefined) {
 
 function RowActions({
   request,
-  onMessage,
   onMore,
   onQuote,
   onView,
 }: {
   request: DashboardRequest;
-  onMessage: () => void;
   onMore: () => void;
   onQuote: () => void;
   onView: (request: DashboardRequest) => void;
@@ -727,9 +722,6 @@ function RowActions({
       <Button size="sm" variant="outline" onClick={() => onView(request)}>
         <Eye className="h-3.5 w-3.5" />
         View
-      </Button>
-      <Button size="icon" title="Message customer" variant="ghost" onClick={onMessage}>
-        <MessageSquare className="h-4 w-4" />
       </Button>
       {canQuote ? (
         <Button size="icon" title="Quote request" variant="ghost" onClick={onQuote}>
@@ -747,7 +739,6 @@ function RequestCard({
   request,
   onCopy,
   onCost,
-  onMessage,
   onMore,
   onQuote,
   onView,
@@ -755,7 +746,6 @@ function RequestCard({
   request: DashboardRequest;
   onCopy: (request: DashboardRequest) => void;
   onCost: (request: DashboardRequest) => void;
-  onMessage: () => void;
   onMore: () => void;
   onQuote: () => void;
   onView: (request: DashboardRequest) => void;
@@ -783,7 +773,7 @@ function RequestCard({
       </div>
       <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
         <CostBadge request={request} onClick={onCost} />
-        <RowActions request={request} onMessage={onMessage} onMore={onMore} onQuote={onQuote} onView={onView} />
+        <RowActions request={request} onMore={onMore} onQuote={onQuote} onView={onView} />
       </div>
     </div>
   );
