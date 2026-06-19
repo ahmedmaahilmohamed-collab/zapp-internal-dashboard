@@ -118,7 +118,7 @@ function labelFromStatus(value: string | null | undefined) {
   const normalized = normalizedText(value);
   if (!normalized) return "Unknown";
   if (normalized.includes("partial") && normalized.includes("fulfill")) return "Partially Fulfilled";
-  if (normalized.includes("not required")) return "Not required";
+  if (normalized.includes("not required")) return "Cancelled";
   if (normalized.includes("fulfill")) return "Fulfilled";
   if (normalized.includes("unfulfill")) return "Unfulfilled";
   if (normalized.includes("approve")) return "Approved";
@@ -138,10 +138,13 @@ function orderFulfillmentStatus(order: DashboardOrder) {
     return "cancelled";
   }
   if (order.fulfillmentStatus) {
+    if (normalizedText(order.fulfillmentStatus).includes("not required")) {
+      return "cancelled";
+    }
     return order.fulfillmentStatus;
   }
   if (normalizedText(order.sourceType) === "shopify order") {
-    return "not_required";
+    return "cancelled";
   }
   return "";
 }
