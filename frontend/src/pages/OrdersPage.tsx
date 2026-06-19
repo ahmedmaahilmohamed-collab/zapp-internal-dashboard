@@ -118,6 +118,7 @@ function labelFromStatus(value: string | null | undefined) {
   const normalized = normalizedText(value);
   if (!normalized) return "Unknown";
   if (normalized.includes("partial") && normalized.includes("fulfill")) return "Partially Fulfilled";
+  if (normalized.includes("not required")) return "Not required";
   if (normalized.includes("fulfill")) return "Fulfilled";
   if (normalized.includes("unfulfill")) return "Unfulfilled";
   if (normalized.includes("approve")) return "Approved";
@@ -128,6 +129,21 @@ function labelFromStatus(value: string | null | undefined) {
   if (normalized.includes("paid")) return "Paid";
   if (normalized.includes("pending") || normalized.includes("open")) return "Pending";
   return normalized.replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function orderFulfillmentStatus(order: DashboardOrder) {
+  const financial = normalizedText(order.financialStatus);
+  const status = normalizedText(order.status);
+  if (status.includes("cancel") || financial.includes("void")) {
+    return "cancelled";
+  }
+  if (order.fulfillmentStatus) {
+    return order.fulfillmentStatus;
+  }
+  if (normalizedText(order.sourceType) === "shopify order") {
+    return "not_required";
+  }
+  return "";
 }
 
 function statusTone(value: string | null | undefined) {
@@ -211,7 +227,7 @@ export function OrdersPage() {
     const paymentText = normalizedText(payment);
     const filtered = (data?.items ?? []).filter((order) => {
       if (statusText) {
-        const orderStatus = normalizedText(`${order.status} ${order.fulfillmentStatus}`);
+        const orderStatus = normalizedText(`${order.status} ${orderFulfillmentStatus(order)}`);
         if (!orderStatus.includes(statusText)) {
           return false;
         }
@@ -267,14 +283,15 @@ export function OrdersPage() {
   const summary = useMemo(() => {
     return visibleOrders.reduce(
       (acc, order) => {
-        const fulfillment = labelFromStatus(order.fulfillmentStatus || order.status);
+        const fulfillment = labelFromStatus(orderFulfillmentStatus(order));
         const paymentLabel = labelFromStatus(order.financialStatus);
+        const orderStatus = labelFromStatus(order.status);
         acc.totalOrders += 1;
         acc.totalValue += Number(order.total || 0);
         if (paymentLabel === "Paid") acc.paid += 1;
         if (fulfillment === "Fulfilled") acc.fulfilled += 1;
         if (paymentLabel === "Pending" || fulfillment === "Pending" || fulfillment === "Unfulfilled") acc.pending += 1;
-        if (fulfillment === "Cancelled" || paymentLabel === "Refunded") acc.cancelled += 1;
+        if (fulfillment === "Cancelled" || orderStatus === "Cancelled" || paymentLabel === "Refunded" || paymentLabel === "Voided") acc.cancelled += 1;
         return acc;
       },
       {
@@ -630,7 +647,7 @@ export function OrdersPage() {
                         <CustomerCell order={order} />
                       </td>
                       <td className="px-4 py-4 align-middle">
-                        <LargeStatusBadge value={order.fulfillmentStatus || order.status} />
+                        <LargeStatusBadge value={orderFulfillmentStatus(order)} />
                       </td>
                       <td className="px-4 py-4 align-middle">
                         <LargeStatusBadge value={order.financialStatus} />
@@ -935,7 +952,7 @@ function OrderCard({
         <CustomerCell order={order} />
       </div>
       <div className="mt-4 grid gap-3 sm:grid-cols-2">
-        <LargeStatusBadge value={order.fulfillmentStatus || order.status} />
+        <LargeStatusBadge value={orderFulfillmentStatus(order)} />
         <LargeStatusBadge value={order.financialStatus} />
         <div>
           <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Total</p>
@@ -968,7 +985,7 @@ function OrderDetails({ order, onClose }: { order: DashboardOrder; onClose: () =
     ["Email", order.customerEmail],
     ["Status", labelFromStatus(order.status)],
     ["Financial status", labelFromStatus(order.financialStatus)],
-    ["Fulfillment", labelFromStatus(order.fulfillmentStatus)],
+    ["Fulfillment", labelFromStatus(orderFulfillmentStatus(order))],
     ["Total", formatCurrency(order.total, order.currency)],
     ["Items", safeDisplay(order.itemCount)],
     ["Receipt", labelFromStatus(order.receiptStatus)],

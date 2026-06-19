@@ -238,6 +238,7 @@ def normalize_order(item: dict[str, Any]) -> dict[str, Any]:
     tracking = _first_dict(item, "trackingSummary", "tracking_summary", "tracking")
     product_lines = _first_value(item, "productLines", "product_lines", "lineItems", "line_items")
     is_cancelled = _is_cancelled(item)
+    fulfillment_status = _order_fulfillment_status(item, is_cancelled=is_cancelled)
     total = _first_value(
         item,
         "total",
@@ -259,9 +260,19 @@ def normalize_order(item: dict[str, Any]) -> dict[str, Any]:
         ),
         "customerName": _safe_str(_first_value(item, "customerName", "customer_name") or _customer_name(customer)),
         "customerEmail": _safe_str(_first_value(item, "customerEmail", "customer_email", "email") or customer.get("email")),
-        "status": "cancelled" if is_cancelled else _priority_status(item, "status", "approvalStatus", "approval_status", "displayFulfillmentStatus"),
-        "financialStatus": _priority_status(item, "financialStatus", "financial_status", "paymentStatus", "payment_status", "refundStatus", "refund_status"),
-        "fulfillmentStatus": "cancelled" if is_cancelled else _safe_str(_first_value(item, "fulfillmentStatus", "fulfillment_status", "displayFulfillmentStatus")),
+        "status": "cancelled" if is_cancelled else _priority_status(item, "status", "approvalStatus", "approval_status"),
+        "financialStatus": _priority_status(
+            item,
+            "financialStatus",
+            "financial_status",
+            "displayFinancialStatus",
+            "display_financial_status",
+            "paymentStatus",
+            "payment_status",
+            "refundStatus",
+            "refund_status",
+        ),
+        "fulfillmentStatus": fulfillment_status,
         "total": _safe_number(total),
         "currency": _safe_str(_first_value(item, "currency", "currencyCode", "currency_code", "presentmentCurrencyCode")) or "USD",
         "createdAt": _safe_date(_first_value(item, "createdAt", "created_at", "processedAt", "processed_at")),
@@ -679,14 +690,23 @@ def _is_cancelled(source: dict[str, Any]) -> bool:
             "status",
             "approvalStatus",
             "approval_status",
+            "financialStatus",
+            "financial_status",
+            "displayFinancialStatus",
+            "display_financial_status",
+            "paymentStatus",
+            "payment_status",
+            "refundStatus",
+            "refund_status",
             "displayFulfillmentStatus",
+            "display_fulfillment_status",
             "fulfillmentStatus",
             "fulfillment_status",
             "cancelReason",
             "cancel_reason",
         )
     ).lower()
-    if "cancel" in status_text or "canceled" in status_text:
+    if "cancel" in status_text or "canceled" in status_text or "void" in status_text:
         return True
 
     for key in ("cancelledAt", "cancelled_at", "canceledAt", "canceled_at", "cancelled", "canceled", "isCancelled", "is_cancelled"):
@@ -697,6 +717,29 @@ def _is_cancelled(source: dict[str, Any]) -> bool:
             return value
         return True
     return False
+
+
+def _order_fulfillment_status(source: dict[str, Any], *, is_cancelled: bool) -> str:
+    if is_cancelled:
+        return "cancelled"
+
+    status = _first_value(
+        source,
+        "fulfillmentStatus",
+        "fulfillment_status",
+        "displayFulfillmentStatus",
+        "display_fulfillment_status",
+        "shopifyFulfillmentStatus",
+        "shopify_fulfillment_status",
+    )
+    if status:
+        return _safe_str(status)
+
+    source_type = str(_first_value(source, "sourceType", "source_type") or "").lower()
+    if source_type == "shopify_order":
+        return "not_required"
+
+    return ""
 
 
 def _customer_name(customer: dict[str, Any]) -> str:
