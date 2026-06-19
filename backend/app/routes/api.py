@@ -237,6 +237,7 @@ def normalize_order(item: dict[str, Any]) -> dict[str, Any]:
     customer = _first_dict(item, "customer", "customerInfo", "customer_info")
     tracking = _first_dict(item, "trackingSummary", "tracking_summary", "tracking")
     product_lines = _first_value(item, "productLines", "product_lines", "lineItems", "line_items")
+    is_cancelled = _is_cancelled(item)
     total = _first_value(
         item,
         "total",
@@ -258,9 +259,9 @@ def normalize_order(item: dict[str, Any]) -> dict[str, Any]:
         ),
         "customerName": _safe_str(_first_value(item, "customerName", "customer_name") or _customer_name(customer)),
         "customerEmail": _safe_str(_first_value(item, "customerEmail", "customer_email", "email") or customer.get("email")),
-        "status": _priority_status(item, "status", "approvalStatus", "approval_status", "displayFulfillmentStatus", "cancelledAt", "cancelled_at", "canceledAt", "canceled_at"),
+        "status": "cancelled" if is_cancelled else _priority_status(item, "status", "approvalStatus", "approval_status", "displayFulfillmentStatus"),
         "financialStatus": _priority_status(item, "financialStatus", "financial_status", "paymentStatus", "payment_status", "refundStatus", "refund_status"),
-        "fulfillmentStatus": _safe_str(_first_value(item, "fulfillmentStatus", "fulfillment_status", "displayFulfillmentStatus")),
+        "fulfillmentStatus": "cancelled" if is_cancelled else _safe_str(_first_value(item, "fulfillmentStatus", "fulfillment_status", "displayFulfillmentStatus")),
         "total": _safe_number(total),
         "currency": _safe_str(_first_value(item, "currency", "currencyCode", "currency_code", "presentmentCurrencyCode")) or "USD",
         "createdAt": _safe_date(_first_value(item, "createdAt", "created_at", "processedAt", "processed_at")),
@@ -669,6 +670,33 @@ def _priority_status(source: dict[str, Any], *keys: str) -> str:
     if "cancel" in joined:
         return "cancelled"
     return _safe_str(values[0] if values else None)
+
+
+def _is_cancelled(source: dict[str, Any]) -> bool:
+    status_text = " ".join(
+        str(_first_value(source, key) or "")
+        for key in (
+            "status",
+            "approvalStatus",
+            "approval_status",
+            "displayFulfillmentStatus",
+            "fulfillmentStatus",
+            "fulfillment_status",
+            "cancelReason",
+            "cancel_reason",
+        )
+    ).lower()
+    if "cancel" in status_text or "canceled" in status_text:
+        return True
+
+    for key in ("cancelledAt", "cancelled_at", "canceledAt", "canceled_at", "cancelled", "canceled", "isCancelled", "is_cancelled"):
+        value = source.get(key)
+        if value is None or value == "":
+            continue
+        if isinstance(value, bool):
+            return value
+        return True
+    return False
 
 
 def _customer_name(customer: dict[str, Any]) -> str:
