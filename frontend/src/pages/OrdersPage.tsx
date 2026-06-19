@@ -25,6 +25,7 @@ import {
   fetchCurrencies,
   fetchOrders,
 } from "../lib/api";
+import { isCancelledOrder, orderDisplayFulfillmentStatus } from "../lib/live-status";
 import { useToast } from "../lib/toast-context";
 import { cn, downloadCsv, formatCurrency, safeDisplay } from "../lib/utils";
 
@@ -131,24 +132,6 @@ function labelFromStatus(value: string | null | undefined) {
   return normalized.replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
-function orderFulfillmentStatus(order: DashboardOrder) {
-  const financial = normalizedText(order.financialStatus);
-  const status = normalizedText(order.status);
-  if (status.includes("cancel") || financial.includes("void")) {
-    return "cancelled";
-  }
-  if (order.fulfillmentStatus) {
-    if (normalizedText(order.fulfillmentStatus).includes("not required")) {
-      return "cancelled";
-    }
-    return order.fulfillmentStatus;
-  }
-  if (normalizedText(order.sourceType) === "shopify order") {
-    return "cancelled";
-  }
-  return "";
-}
-
 function statusTone(value: string | null | undefined) {
   const normalized = normalizedText(value);
   if (normalized.includes("paid") || normalized.includes("fulfilled") || normalized.includes("approve")) return "success";
@@ -230,7 +213,7 @@ export function OrdersPage() {
     const paymentText = normalizedText(payment);
     const filtered = (data?.items ?? []).filter((order) => {
       if (statusText) {
-        const orderStatus = normalizedText(`${order.status} ${orderFulfillmentStatus(order)}`);
+        const orderStatus = normalizedText(`${order.status} ${orderDisplayFulfillmentStatus(order)}`);
         if (!orderStatus.includes(statusText)) {
           return false;
         }
@@ -286,15 +269,18 @@ export function OrdersPage() {
   const summary = useMemo(() => {
     return visibleOrders.reduce(
       (acc, order) => {
-        const fulfillment = labelFromStatus(orderFulfillmentStatus(order));
+        const fulfillment = labelFromStatus(orderDisplayFulfillmentStatus(order));
         const paymentLabel = labelFromStatus(order.financialStatus);
         const orderStatus = labelFromStatus(order.status);
+        const cancelled = isCancelledOrder(order);
         acc.totalOrders += 1;
-        acc.totalValue += Number(order.total || 0);
-        if (paymentLabel === "Paid") acc.paid += 1;
-        if (fulfillment === "Fulfilled") acc.fulfilled += 1;
-        if (paymentLabel === "Pending" || fulfillment === "Pending" || fulfillment === "Unfulfilled") acc.pending += 1;
-        if (fulfillment === "Cancelled" || orderStatus === "Cancelled" || paymentLabel === "Refunded" || paymentLabel === "Voided") acc.cancelled += 1;
+        if (!cancelled) {
+          acc.totalValue += Number(order.total || 0);
+          if (paymentLabel === "Paid") acc.paid += 1;
+          if (fulfillment === "Fulfilled") acc.fulfilled += 1;
+          if (paymentLabel === "Pending" || fulfillment === "Pending" || fulfillment === "Unfulfilled") acc.pending += 1;
+        }
+        if (cancelled || fulfillment === "Cancelled" || orderStatus === "Cancelled" || paymentLabel === "Refunded" || paymentLabel === "Voided") acc.cancelled += 1;
         return acc;
       },
       {
@@ -650,7 +636,7 @@ export function OrdersPage() {
                         <CustomerCell order={order} />
                       </td>
                       <td className="px-4 py-4 align-middle">
-                        <LargeStatusBadge value={orderFulfillmentStatus(order)} />
+                        <LargeStatusBadge value={orderDisplayFulfillmentStatus(order)} />
                       </td>
                       <td className="px-4 py-4 align-middle">
                         <LargeStatusBadge value={order.financialStatus} />
@@ -725,10 +711,11 @@ function SummaryCard({ label, value, tone }: { label: string; value: string; ton
         <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</p>
         <p
           className={cn(
-            "mt-2 truncate text-2xl font-bold",
+            "mt-2 break-words text-xl font-bold leading-tight sm:text-2xl",
             tone === "success" && "text-emerald-600 dark:text-emerald-400",
             tone === "danger" && "text-red-600 dark:text-red-400",
           )}
+          title={value}
         >
           {value}
         </p>
@@ -955,7 +942,7 @@ function OrderCard({
         <CustomerCell order={order} />
       </div>
       <div className="mt-4 grid gap-3 sm:grid-cols-2">
-        <LargeStatusBadge value={orderFulfillmentStatus(order)} />
+        <LargeStatusBadge value={orderDisplayFulfillmentStatus(order)} />
         <LargeStatusBadge value={order.financialStatus} />
         <div>
           <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Total</p>
@@ -988,7 +975,7 @@ function OrderDetails({ order, onClose }: { order: DashboardOrder; onClose: () =
     ["Email", order.customerEmail],
     ["Status", labelFromStatus(order.status)],
     ["Financial status", labelFromStatus(order.financialStatus)],
-    ["Fulfillment", labelFromStatus(orderFulfillmentStatus(order))],
+    ["Fulfillment", labelFromStatus(orderDisplayFulfillmentStatus(order))],
     ["Total", formatCurrency(order.total, order.currency)],
     ["Items", safeDisplay(order.itemCount)],
     ["Receipt", labelFromStatus(order.receiptStatus)],

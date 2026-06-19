@@ -42,20 +42,23 @@ async def get_overview_stats(
             "canManageAccess": user.role == "admin",
             "canViewDiagnostics": user.role == "admin",
         },
-        "finance": _finance_stats(db),
+        "finance": _finance_stats(db, zapp_api),
         "configuration": _configuration_stats(db),
         "access": _access_stats(db, user),
-        "recentCostRecords": _recent_cost_records(db),
-        "financeTrend": _finance_trend(db),
+        "recentCostRecords": _recent_cost_records(db, zapp_api),
+        "financeTrend": _finance_trend(db, zapp_api),
         "dashboardWidgets": _dashboard_widgets(db, zapp_api),
         "zappApiConfigured": client.is_configured,
         "zappApi": zapp_api,
     }
 
 
-def _finance_stats(db: Session) -> dict[str, Any]:
-    records = db.scalars(select(InternalCostRecord)).all()
+def _finance_stats(db: Session, zapp_api: dict[str, Any]) -> dict[str, Any]:
+    all_records = db.scalars(select(InternalCostRecord)).all()
+    excluded_sources = _cancelled_source_keys(zapp_api)
+    records = _active_cost_records(all_records, excluded_sources)
     total_records = len(records)
+    cancelled_excluded_count = len(all_records) - len(records)
     context = crud.build_currency_conversion_context(db)
     total_sale_value = Decimal("0")
     total_cost_value = Decimal("0")
@@ -74,18 +77,13 @@ def _finance_stats(db: Session) -> dict[str, Any]:
         total_profit += Decimal(values["profitBase"] or 0)
 
     average_margin_percent = None if total_sale_value <= 0 else total_profit / total_sale_value * Decimal("100")
-    profitable_records_count = (
-        db.scalar(select(func.count(InternalCostRecord.id)).where(InternalCostRecord.profit > 0)) or 0
-    )
-    loss_records_count = (
-        db.scalar(select(func.count(InternalCostRecord.id)).where(InternalCostRecord.profit < 0)) or 0
-    )
-    linked_orders_count = (
-        db.scalar(select(func.count(InternalCostRecord.id)).where(InternalCostRecord.linked_order_id.is_not(None))) or 0
-    )
-    linked_requests_count = (
-        db.scalar(select(func.count(InternalCostRecord.id)).where(InternalCostRecord.linked_request_id.is_not(None))) or 0
-    )
+    profitable_records_count = sum(1 for record in records if record.profit > 0)
+    loss_records_count = sum(1 for record in records if record.profit < 0)
+    linked_orders_count = sum(1 for record in records if record.linked_order_id)
+    linked_requests_count = sum(1 for record in records if record.linked_request_id)
+    conversion_warnings = sorted(warnings)
+    if cancelled_excluded_count:
+        conversion_warnings.append(f"{cancelled_excluded_count} cancelled or voided linked cost record(s) excluded from finance totals.")
 
     return {
         "currency": context["baseCurrency"],
@@ -99,8 +97,8 @@ def _finance_stats(db: Session) -> dict[str, Any]:
         "linkedOrdersCount": int(linked_orders_count),
         "linkedRequestsCount": int(linked_requests_count),
         "convertedRecordCount": int(converted_count),
-        "excludedRecordCount": int(total_records - converted_count),
-        "conversionWarnings": sorted(warnings),
+        "excludedRecordCount": int(len(all_records) - converted_count),
+        "conversionWarnings": conversion_warnings,
         "scope": "local_finance",
     }
 
@@ -129,12 +127,12 @@ def _access_stats(db: Session, user: UserAccess) -> dict[str, Any]:
     return {"pendingUsersCount": int(pending_users_count)}
 
 
-def _recent_cost_records(db: Session) -> list[dict[str, Any]]:
-    records = db.scalars(
+def _recent_cost_records(db: Session, zapp_api: dict[str, Any]) -> list[dict[str, Any]]:
+    records = _active_cost_records(db.scalars(
         select(InternalCostRecord)
         .order_by(InternalCostRecord.updated_at.desc(), InternalCostRecord.id.desc())
-        .limit(6)
-    ).all()
+        .limit(20)
+    ).all(), _cancelled_source_keys(zapp_api))[:6]
 
     return [
         {
@@ -154,12 +152,12 @@ def _recent_cost_records(db: Session) -> list[dict[str, Any]]:
     ]
 
 
-def _finance_trend(db: Session) -> list[dict[str, Any]]:
-    records = db.scalars(
+def _finance_trend(db: Session, zapp_api: dict[str, Any]) -> list[dict[str, Any]]:
+    records = _active_cost_records(db.scalars(
         select(InternalCostRecord)
         .order_by(InternalCostRecord.updated_at.desc(), InternalCostRecord.id.desc())
         .limit(365)
-    ).all()
+    ).all(), _cancelled_source_keys(zapp_api))
     context = crud.build_currency_conversion_context(db)
     buckets: dict[str, dict[str, Decimal | int]] = {}
 
@@ -200,7 +198,7 @@ def _finance_trend(db: Session) -> list[dict[str, Any]]:
 
 
 def _dashboard_widgets(db: Session, zapp_api: dict[str, Any]) -> dict[str, Any]:
-    records = db.scalars(select(InternalCostRecord)).all()
+    records = _active_cost_records(db.scalars(select(InternalCostRecord)).all(), _cancelled_source_keys(zapp_api))
     context = crud.build_currency_conversion_context(db)
     customer_totals: dict[str, Decimal] = {}
     revenue_last_30 = Decimal("0")
@@ -232,6 +230,75 @@ def _dashboard_widgets(db: Session, zapp_api: dict[str, Any]) -> dict[str, Any]:
         "topCategories": [],
         "topCategoriesAvailable": False,
     }
+
+
+def _cancelled_source_keys(zapp_api: dict[str, Any]) -> set[str]:
+    keys: set[str] = set()
+    for section_name in ("orders", "requests"):
+        section = zapp_api.get(section_name) or {}
+        if not section.get("available"):
+            continue
+        for item in section.get("sampleItems") or section.get("recent") or []:
+            if not isinstance(item, dict) or not _is_cancelled_live_item(item):
+                continue
+            keys.update(_source_keys_for_live_item(item))
+    return {key for key in keys if key}
+
+
+def _active_cost_records(records: list[InternalCostRecord], excluded_sources: set[str]) -> list[InternalCostRecord]:
+    if not excluded_sources:
+        return records
+    return [
+        record
+        for record in records
+        if not _record_matches_source_keys(record, excluded_sources)
+    ]
+
+
+def _record_matches_source_keys(record: InternalCostRecord, source_keys: set[str]) -> bool:
+    return bool(_record_source_keys(record).intersection(source_keys))
+
+
+def _record_source_keys(record: InternalCostRecord) -> set[str]:
+    return {
+        key
+        for key in (
+            _match_value(record.source_id),
+            _match_value(record.linked_order_id),
+            _match_value(record.linked_request_id),
+            _match_value(record.reference_label),
+        )
+        if key
+    }
+
+
+def _source_keys_for_live_item(item: dict[str, Any]) -> set[str]:
+    order_number = _match_value(item.get("orderNumber"))
+    return {
+        key
+        for key in (
+            _match_value(item.get("id")),
+            _match_value(item.get("orderName")),
+            order_number,
+            _match_value(f"#{order_number}" if order_number else None),
+            _match_value(item.get("requestNumber")),
+            _match_value(item.get("reference")),
+            _match_value(item.get("publicToken")),
+            _match_value(item.get("linkedOrderId")),
+            _match_value(item.get("linkedRequestId")),
+            _match_value((item.get("source") or {}).get("sourceId") if isinstance(item.get("source"), dict) else None),
+        )
+        if key
+    }
+
+
+def _is_cancelled_live_item(item: dict[str, Any]) -> bool:
+    status_text = _status_text(item)
+    return any(word in status_text for word in ("cancel", "refund", "void", "reject", "declin", "not required"))
+
+
+def _match_value(value: Any) -> str:
+    return str(value or "").strip().lower()
 
 
 async def _zapp_api_stats(
@@ -321,8 +388,9 @@ async def _fetch_zapp_section(
         "total": total,
         "recentCount": len(recent) if include_recent else 0,
         "recent": recent,
+        "sampleItems": normalized,
         "statusCounts": status_counts,
-        "cancelledCount": status_counts.get("cancelled", 0) + status_counts.get("refunded", 0),
+        "cancelledCount": sum(1 for item in normalized if _is_cancelled_live_item(item)),
         "countsMayBePartial": counts_may_be_partial,
         "sampleSize": len(normalized),
         "requestConversion": _request_conversion_from_items(
@@ -344,6 +412,7 @@ def _unavailable_zapp_section(status: str) -> dict[str, Any]:
         "total": None,
         "recentCount": 0,
         "recent": [],
+        "sampleItems": [],
         "statusCounts": {},
         "cancelledCount": 0,
         "countsMayBePartial": False,
@@ -383,9 +452,9 @@ def _request_conversion_from_items(
         quoted_total = Decimal(str(item.get("quotedTotal") or 0))
         if quoted_total > 0 or item.get("quoteStatus"):
             quoted += 1
-        if any(word in status_text for word in ("approved", "paid", "success", "complete")):
+        if any(word in status_text for word in ("approved", "paid", "success", "complete")) and not _is_cancelled_live_item(item):
             approved_paid += 1
-        if any(word in status_text for word in ("cancel", "refund", "reject")):
+        if _is_cancelled_live_item(item):
             cancelled += 1
         elif any(word in status_text for word in ("pending", "awaiting", "open", "draft", "new")) or not status_text:
             pending += 1
@@ -410,16 +479,18 @@ def _requests_this_month(zapp_api: dict[str, Any]) -> int | None:
     if not requests.get("available"):
         return None
     current_month = datetime.now(timezone.utc).strftime("%Y-%m")
-    recent = requests.get("recent") or []
+    recent = requests.get("sampleItems") or requests.get("recent") or []
     return sum(1 for item in recent if str(item.get("createdAt") or "").startswith(current_month))
 
 
 def _average_live_value(section: dict[str, Any] | None, amount_key: str, context: dict) -> float | None:
     if not section or not section.get("available"):
         return None
-    recent = section.get("recent") or []
+    recent = section.get("sampleItems") or section.get("recent") or []
     values = []
     for item in recent:
+        if _is_cancelled_live_item(item):
+            continue
         if item.get(amount_key) is None:
             continue
         converted, warning = crud.convert_amount_to_base(item.get(amount_key), item.get("currency"), context)
@@ -439,8 +510,11 @@ def _status_text(item: dict[str, Any]) -> str:
             item.get("quoteStatus"),
             item.get("paymentStatus"),
             item.get("financialStatus"),
+            item.get("fulfillmentStatus"),
+            item.get("receiptStatus"),
+            item.get("deliveryStatus"),
         )
-    )
+    ).replace("_", " ").replace("-", " ")
 
 
 def _summary_currency(currencies: list[str]) -> str:
@@ -455,6 +529,10 @@ def _summary_currency(currencies: list[str]) -> str:
 def _status_counts(items: list[dict[str, Any]]) -> dict[str, int]:
     counts: dict[str, int] = {}
     for item in items:
+        if _is_cancelled_live_item(item):
+            status = "cancelled"
+            counts[status] = counts.get(status, 0) + 1
+            continue
         status = str(
             item.get("status")
             or item.get("paymentStatus")

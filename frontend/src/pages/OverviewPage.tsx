@@ -304,7 +304,7 @@ function StatCard({
             <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</p>
             <p
               className={cn(
-                "mt-2 truncate text-2xl font-bold",
+                "mt-2 break-words text-xl font-bold leading-tight sm:text-2xl",
                 tone === "success" && "text-emerald-600 dark:text-emerald-400",
                 tone === "warning" && "text-orange-600 dark:text-orange-400",
                 tone === "danger" && "text-red-600 dark:text-red-400",
@@ -355,7 +355,14 @@ function SummaryTile({ label, value, tone }: { label: string; value: string; ton
   return (
     <div className="rounded-md border bg-muted/20 p-3">
       <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</p>
-      <p className={cn("mt-2 truncate text-sm font-semibold", tone === "success" && "text-emerald-600 dark:text-emerald-400", tone === "danger" && "text-red-600 dark:text-red-400")}>
+      <p
+        className={cn(
+          "mt-2 break-words text-sm font-semibold leading-tight",
+          tone === "success" && "text-emerald-600 dark:text-emerald-400",
+          tone === "danger" && "text-red-600 dark:text-red-400",
+        )}
+        title={value}
+      >
         {value}
       </p>
     </div>

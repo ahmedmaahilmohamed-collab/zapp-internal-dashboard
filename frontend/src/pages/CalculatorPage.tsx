@@ -545,10 +545,11 @@ function ResultCard({
         <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</p>
         <p
           className={cn(
-            "mt-2 text-2xl font-bold",
+            "mt-2 break-words text-xl font-bold leading-tight sm:text-2xl",
             highlight && "text-primary",
             tone === "profit" && "text-emerald-600 dark:text-emerald-400",
           )}
+          title={value}
         >
           {value}
         </p>

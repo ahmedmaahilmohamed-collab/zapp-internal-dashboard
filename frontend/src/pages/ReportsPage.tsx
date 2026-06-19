@@ -162,11 +162,12 @@ function Stat({ label, value, meta, tone }: { label: string; value: string; meta
         <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</p>
         <p
           className={cn(
-            "mt-2 truncate text-2xl font-bold",
+            "mt-2 break-words text-xl font-bold leading-tight sm:text-2xl",
             tone === "success" && "text-emerald-600 dark:text-emerald-400",
             tone === "warning" && "text-orange-600 dark:text-orange-400",
             tone === "danger" && "text-red-600 dark:text-red-400",
           )}
+          title={value}
         >
           {value}
         </p>

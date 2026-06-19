@@ -30,6 +30,7 @@ import {
   updateCurrency,
   updateShippingRate,
 } from "../lib/api";
+import { isCancelledOrder, isCancelledRequest, liveRecordKeys, normalizedMatchValue } from "../lib/live-status";
 import { useToast } from "../lib/toast-context";
 import { cn, downloadCsv, formatCurrency, formatDate, safeDisplay } from "../lib/utils";
 
@@ -918,6 +919,69 @@ function costNumber(value: string) {
   return Number(value || 0);
 }
 
+async function loadCancelledSourceKeys() {
+  try {
+    const [orders, requests] = await Promise.all([
+      fetchOrders({ page: 1, pageSize: 100 }),
+      fetchRequests({ page: 1, pageSize: 100 }),
+    ]);
+    return Array.from(
+      new Set([
+        ...orders.items.filter(isCancelledOrder).flatMap(liveRecordKeys),
+        ...requests.items.filter(isCancelledRequest).flatMap(liveRecordKeys),
+      ]),
+    );
+  } catch {
+    return [];
+  }
+}
+
+function costRecordKeys(record: CostRecord) {
+  return [
+    record.source_id,
+    record.linked_order_id,
+    record.linked_request_id,
+    record.reference_label,
+  ]
+    .map((value) => normalizedMatchValue(value))
+    .filter(Boolean);
+}
+
+function isCancelledCostRecord(record: CostRecord, cancelledSourceKeys: Set<string>) {
+  return costRecordKeys(record).some((key) => cancelledSourceKeys.has(key));
+}
+
+function FinanceMetricCard({
+  label,
+  value,
+  meta,
+  tone,
+}: {
+  label: string;
+  value: string;
+  meta?: string;
+  tone?: "success" | "danger";
+}) {
+  return (
+    <Card>
+      <CardContent className="p-4">
+        <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</p>
+        <p
+          className={cn(
+            "mt-2 break-words text-xl font-bold leading-tight sm:text-2xl",
+            tone === "success" && "text-emerald-600 dark:text-emerald-400",
+            tone === "danger" && "text-red-600 dark:text-red-400",
+          )}
+          title={value}
+        >
+          {value}
+        </p>
+        {meta ? <p className="mt-2 text-xs text-muted-foreground">{meta}</p> : null}
+      </CardContent>
+    </Card>
+  );
+}
+
 export function CostsPage() {
   const { notify } = useToast();
   const [records, setRecords] = useState<CostRecord[]>([]);
@@ -936,19 +1000,22 @@ export function CostsPage() {
   const [linkError, setLinkError] = useState("");
   const [linkOrders, setLinkOrders] = useState<DashboardOrder[]>([]);
   const [linkRequests, setLinkRequests] = useState<DashboardRequest[]>([]);
+  const [cancelledSourceKeys, setCancelledSourceKeys] = useState<string[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      const [costRecords, activeCurrencies, activeTemplates] = await Promise.all([
+      const [costRecords, activeCurrencies, activeTemplates, cancelledKeys] = await Promise.all([
         fetchCosts(filters),
         fetchCurrencies({ includeInactive: false }),
         fetchCostTemplates({ includeInactive: false }),
+        loadCancelledSourceKeys(),
       ]);
       setRecords(costRecords);
       setCurrencies(activeCurrencies);
       setTemplates(activeTemplates);
+      setCancelledSourceKeys(cancelledKeys);
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : "Unable to load cost records.";
       setError(message);
@@ -960,12 +1027,19 @@ export function CostsPage() {
 
   useEffect(() => { void load(); }, [load]);
 
+  const cancelledSourceKeySet = useMemo(() => new Set(cancelledSourceKeys), [cancelledSourceKeys]);
+  const activeRecords = useMemo(
+    () => records.filter((record) => !isCancelledCostRecord(record, cancelledSourceKeySet)),
+    [cancelledSourceKeySet, records],
+  );
+  const cancelledCostRecordCount = records.length - activeRecords.length;
+
   const totals = useMemo(() => {
-    const profit = records.reduce((sum, record) => sum + Number(record.profit || 0), 0);
-    const revenue = records.reduce((sum, record) => sum + Number(record.sale_total || 0), 0);
-    const totalCost = records.reduce((sum, record) => sum + totalCostFromRecord(record), 0);
+    const profit = activeRecords.reduce((sum, record) => sum + Number(record.profit || 0), 0);
+    const revenue = activeRecords.reduce((sum, record) => sum + Number(record.sale_total || 0), 0);
+    const totalCost = activeRecords.reduce((sum, record) => sum + totalCostFromRecord(record), 0);
     return { profit, revenue, totalCost };
-  }, [records]);
+  }, [activeRecords]);
 
   function activeCurrencyOrBase(code: string | null | undefined) {
     return currencies.some((currency) => currency.code === code && currency.is_active)
@@ -1197,10 +1271,14 @@ export function CostsPage() {
       />
 
       <div className="grid gap-3 md:grid-cols-4">
-        <Card><CardContent className="p-4"><p className="text-[10px] uppercase tracking-wider text-muted-foreground">Records</p><p className="mt-2 text-2xl font-bold">{records.length}</p></CardContent></Card>
-        <Card><CardContent className="p-4"><p className="text-[10px] uppercase tracking-wider text-muted-foreground">Revenue</p><p className="mt-2 text-2xl font-bold">{formatCurrency(totals.revenue, records[0]?.currency || "MVR")}</p></CardContent></Card>
-        <Card><CardContent className="p-4"><p className="text-[10px] uppercase tracking-wider text-muted-foreground">Total Cost</p><p className="mt-2 text-2xl font-bold">{formatCurrency(totals.totalCost, records[0]?.currency || "MVR")}</p></CardContent></Card>
-        <Card><CardContent className="p-4"><p className="text-[10px] uppercase tracking-wider text-muted-foreground">Profit</p><p className={cn("mt-2 text-2xl font-bold", totals.profit < 0 ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400")}>{formatCurrency(totals.profit, records[0]?.currency || "MVR")}</p></CardContent></Card>
+        <FinanceMetricCard label="Records" meta={cancelledCostRecordCount ? `${cancelledCostRecordCount} cancelled excluded` : undefined} value={String(activeRecords.length)} />
+        <FinanceMetricCard label="Revenue" value={formatCurrency(totals.revenue, activeRecords[0]?.currency || records[0]?.currency || "MVR")} />
+        <FinanceMetricCard label="Total Cost" value={formatCurrency(totals.totalCost, activeRecords[0]?.currency || records[0]?.currency || "MVR")} />
+        <FinanceMetricCard
+          label="Profit"
+          tone={totals.profit < 0 ? "danger" : "success"}
+          value={formatCurrency(totals.profit, activeRecords[0]?.currency || records[0]?.currency || "MVR")}
+        />
       </div>
 
       <Card>

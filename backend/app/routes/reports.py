@@ -9,9 +9,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .. import crud
+from ..config import get_settings
 from ..database import get_db
 from ..models import InternalCostRecord
 from ..security import require_roles
+from ..zapp_client import ZappApiClient
+from .overview import _active_cost_records, _cancelled_source_keys, _zapp_api_stats
 
 router = APIRouter(prefix="/api/reports", tags=["reports"])
 
@@ -25,7 +28,7 @@ CATEGORY_FIELDS = (
 
 
 @router.get("/finance")
-def get_finance_report(
+async def get_finance_report(
     date_from: date | None = Query(default=None),
     date_to: date | None = Query(default=None),
     group_by: str = Query(default="month", pattern="^month$"),
@@ -38,9 +41,17 @@ def get_finance_report(
     if date_to:
         statement = statement.where(InternalCostRecord.created_at <= datetime.combine(date_to, time.max))
 
-    records = db.scalars(statement).all()
+    all_records = db.scalars(statement).all()
+    settings = get_settings()
+    client = ZappApiClient(
+        base_url=settings.zapp_api_base_url,
+        token=settings.zapp_api_token,
+        timeout_seconds=settings.zapp_api_timeout_seconds,
+    )
+    zapp_api = await _zapp_api_stats(client, datetime.utcnow().isoformat() + "Z")
+    records = _active_cost_records(all_records, _cancelled_source_keys(zapp_api))
     context = crud.build_currency_conversion_context(db)
-    report = _build_report(records, context)
+    report = _build_report(records, context, cancelled_excluded_count=len(all_records) - len(records))
     return {
         "generatedAt": datetime.utcnow().isoformat() + "Z",
         "dateFrom": date_from.isoformat() if date_from else None,
@@ -50,7 +61,7 @@ def get_finance_report(
     }
 
 
-def _build_report(records: list[InternalCostRecord], context: dict) -> dict[str, Any]:
+def _build_report(records: list[InternalCostRecord], context: dict, *, cancelled_excluded_count: int = 0) -> dict[str, Any]:
     monthly: dict[str, dict[str, Decimal | int]] = {}
     category_totals: dict[str, Decimal] = {field: Decimal("0") for field, _label in CATEGORY_FIELDS}
     leaderboards: list[dict[str, Any]] = []
@@ -144,11 +155,19 @@ def _build_report(records: list[InternalCostRecord], context: dict) -> dict[str,
         {"message": message, "recordIds": sorted(record_ids)[:20], "recordCount": len(record_ids)}
         for message, record_ids in sorted(warnings.items())
     ]
+    if cancelled_excluded_count:
+        warning_rows.append(
+            {
+                "message": "Cancelled or voided linked cost records are excluded from report totals.",
+                "recordIds": [],
+                "recordCount": cancelled_excluded_count,
+            }
+        )
 
     return {
         "baseCurrency": context["baseCurrency"],
         "convertedRecordCount": converted_count,
-        "excludedRecordCount": excluded_count,
+        "excludedRecordCount": excluded_count + cancelled_excluded_count,
         "conversionWarnings": warning_rows,
         "summary": {
             "recordCount": len(records),

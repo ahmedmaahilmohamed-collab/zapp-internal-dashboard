@@ -26,6 +26,7 @@ import {
   fetchCurrencies,
   fetchRequests,
 } from "../lib/api";
+import { isCancelledRequest } from "../lib/live-status";
 import { useToast } from "../lib/toast-context";
 import { cn, downloadCsv, formatCurrency, safeDisplay } from "../lib/utils";
 
@@ -264,12 +265,16 @@ export function RequestsPage() {
     return visibleRequests.reduce(
       (acc, request) => {
         const statusLabel = labelFromStatus(request.status);
+        const cancelled = isCancelledRequest(request);
         acc.totalRequests += 1;
-        acc.totalValue += Number(request.quotedTotal || 0);
-        if (statusLabel === "Reviewing") acc.pendingReview += 1;
-        if (statusLabel === "Awaiting Customer") acc.awaitingCustomer += 1;
-        if (statusLabel === "Quoted") acc.quoted += 1;
-        if (statusLabel === "Approved") acc.approved += 1;
+        if (!cancelled) {
+          acc.totalValue += Number(request.quotedTotal || 0);
+          if (statusLabel === "Reviewing") acc.pendingReview += 1;
+          if (statusLabel === "Awaiting Customer") acc.awaitingCustomer += 1;
+          if (statusLabel === "Quoted") acc.quoted += 1;
+          if (statusLabel === "Approved") acc.approved += 1;
+        }
+        if (cancelled || statusLabel === "Cancelled") acc.cancelled += 1;
         return acc;
       },
       {
@@ -279,6 +284,7 @@ export function RequestsPage() {
         awaitingCustomer: 0,
         quoted: 0,
         approved: 0,
+        cancelled: 0,
       },
     );
   }, [visibleRequests]);
@@ -471,13 +477,14 @@ export function RequestsPage() {
         </div>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-7">
         <SummaryCard label="Total Requests" value={String(summary.totalRequests)} />
         <SummaryCard label="Total Value" value={formatCurrency(summary.totalValue, summaryCurrency)} />
         <SummaryCard label="Pending Review" value={String(summary.pendingReview)} />
         <SummaryCard label="Awaiting Customer" value={String(summary.awaitingCustomer)} />
         <SummaryCard label="Quoted" value={String(summary.quoted)} />
         <SummaryCard label="Approved" value={String(summary.approved)} tone="success" />
+        <SummaryCard label="Cancelled" value={String(summary.cancelled)} />
       </div>
 
       <Card>
@@ -712,7 +719,15 @@ function SummaryCard({ label, value, tone }: { label: string; value: string; ton
     <Card>
       <CardContent className="p-4">
         <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</p>
-        <p className={cn("mt-2 truncate text-2xl font-bold", tone === "success" && "text-emerald-600 dark:text-emerald-400")}>{value}</p>
+        <p
+          className={cn(
+            "mt-2 break-words text-xl font-bold leading-tight sm:text-2xl",
+            tone === "success" && "text-emerald-600 dark:text-emerald-400",
+          )}
+          title={value}
+        >
+          {value}
+        </p>
       </CardContent>
     </Card>
   );
