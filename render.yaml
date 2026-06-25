@@ -23,3 +23,5 @@ services:
         sync: false
       - key: ZAPP_API_TOKEN
         sync: false
+      - key: ZAPP_SHOP_DOMAIN
+        sync: false

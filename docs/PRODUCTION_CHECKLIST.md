@@ -21,6 +21,7 @@
 - [ ] `JWT_SECRET` is long, random, and stored only in Render.
 - [ ] `ZAPP_API_BASE_URL` points to the live ZAPP backend.
 - [ ] `ZAPP_API_TOKEN` is stored only in Render.
+- [ ] `ZAPP_SHOP_DOMAIN` is set to the Shopify `.myshopify.com` shop used by ZAPP.
 - [ ] `FRONTEND_ORIGIN=https://dashboard.zappmv.com`.
 - [ ] `CORS_ORIGINS=https://dashboard.zappmv.com`.
 

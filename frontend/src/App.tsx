@@ -13,6 +13,7 @@ import { DiagnosticsPage } from "./pages/DiagnosticsPage";
 import { EmailLogsPage } from "./pages/EmailLogsPage";
 import { CostsPage, CurrenciesPage, ShippingRatesPage } from "./pages/FinancePages";
 import { LoginPage } from "./pages/LoginPage";
+import { ListedProductPricingPage } from "./pages/ListedProductPricingPage";
 import { OrdersPage } from "./pages/OrdersPage";
 import { OverviewPage } from "./pages/OverviewPage";
 import { PendingApprovalPage } from "./pages/PendingApprovalPage";
@@ -103,6 +104,7 @@ function AppRoutes() {
 
           <Route element={<RequireAuth roles={["admin", "manager"]} />}>
             <Route path="costs" element={<CostsPage />} />
+            <Route path="listed-product-pricing" element={<ListedProductPricingPage />} />
             <Route path="cost-templates" element={<CostTemplatesPage />} />
             <Route path="reports" element={<ReportsPage />} />
             <Route path="currencies" element={<CurrenciesPage />} />

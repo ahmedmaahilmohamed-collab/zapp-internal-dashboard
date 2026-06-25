@@ -30,6 +30,7 @@ Set real secrets in `backend/.env` or deployment secrets:
 ```text
 ZAPP_API_BASE_URL=https://receipt-verification-app.onrender.com
 ZAPP_API_TOKEN=your-secure-token
+ZAPP_SHOP_DOMAIN=your-store.myshopify.com
 DATABASE_URL=<local-or-supabase-postgres-url>
 JWT_SECRET=replace-with-a-long-random-local-secret
 CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173

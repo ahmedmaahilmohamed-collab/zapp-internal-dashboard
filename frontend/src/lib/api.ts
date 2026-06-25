@@ -382,6 +382,72 @@ export interface PricingCalculateResult {
   breakdown: Record<string, number>;
 }
 
+export interface ListedProductVariant {
+  id: string;
+  legacyResourceId: string | null;
+  title: string;
+  sku: string | null;
+  price: string | null;
+  nativeMediaCount: number;
+}
+
+export interface ListedProduct {
+  id: string;
+  legacyResourceId: string | null;
+  title: string;
+  handle: string | null;
+  imageUrl: string | null;
+  imageAlt: string | null;
+  mediaCount: number;
+  galleryCount: number;
+  variants: ListedProductVariant[];
+}
+
+export interface ListedProductCollectionResponse {
+  success: boolean;
+  items: ListedProduct[];
+  total: number;
+  truncated: boolean;
+  fetchedAt: string;
+}
+
+export type ListedProductPricingScope = "all_variants" | "variant";
+
+export interface ListedProductPricingRecord {
+  id: number;
+  shop: string;
+  product_id: string;
+  product_legacy_id: string | null;
+  product_title: string;
+  product_handle: string | null;
+  product_image_url: string | null;
+  variant_id: string | null;
+  variant_legacy_id: string | null;
+  variant_title: string | null;
+  variant_sku: string | null;
+  pricing_scope: ListedProductPricingScope;
+  source_currency: string;
+  target_currency: string;
+  item_cost: number;
+  product_weight: number;
+  desired_margin_percent: number;
+  payment_fee_percent: number;
+  total_landed_cost: number;
+  payment_fee_amount: number;
+  expected_profit: number;
+  recommended_sale_price: number;
+  final_rounded_price: number;
+  input_snapshot: Record<string, unknown>;
+  result_snapshot: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export type ListedProductPricingPayload = Omit<
+  ListedProductPricingRecord,
+  "id" | "shop" | "created_at" | "updated_at"
+>;
+
 export type OverviewZappStatus = DiagnosticStatus | "not_configured" | "degraded";
 
 export interface OverviewFinanceStats {
@@ -843,6 +909,38 @@ export async function calculatePricing(payload: PricingCalculatePayload) {
   return apiRequest<PricingCalculateResult>("/api/pricing/calculate", {
     method: "POST",
     body: JSON.stringify(payload),
+  });
+}
+
+export async function fetchListedProducts(query: { search?: string } = {}) {
+  const params = new URLSearchParams();
+  if (query.search?.trim()) {
+    params.set("search", query.search.trim());
+  }
+  return apiRequest<ListedProductCollectionResponse>(`/api/listed-product-pricing/products?${params.toString()}`);
+}
+
+export async function fetchListedProductPricingRecords(query: { productId?: string; variantId?: string } = {}) {
+  const params = new URLSearchParams();
+  if (query.productId?.trim()) {
+    params.set("product_id", query.productId.trim());
+  }
+  if (query.variantId?.trim()) {
+    params.set("variant_id", query.variantId.trim());
+  }
+  return apiRequest<ListedProductPricingRecord[]>(`/api/listed-product-pricing/records?${params.toString()}`);
+}
+
+export async function createListedProductPricingRecord(payload: ListedProductPricingPayload) {
+  return apiRequest<ListedProductPricingRecord>("/api/listed-product-pricing/records", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteListedProductPricingRecord(id: number) {
+  return apiRequest<void>(`/api/listed-product-pricing/records/${id}`, {
+    method: "DELETE",
   });
 }
 

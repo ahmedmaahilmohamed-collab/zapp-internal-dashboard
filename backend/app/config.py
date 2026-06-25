@@ -24,6 +24,7 @@ class Settings(BaseSettings):
 
     zapp_api_base_url: str | None = None
     zapp_api_token: str | None = None
+    zapp_shop_domain: str | None = None
     zapp_api_timeout_seconds: Annotated[float, Field(gt=0)] = 10.0
     jwt_secret_key: str | None = Field(
         default=None,

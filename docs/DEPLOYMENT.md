@@ -46,6 +46,7 @@ DATABASE_URL=<Supabase pooled or direct PostgreSQL connection string>
 JWT_SECRET=<long random secret generated for this dashboard only>
 ZAPP_API_BASE_URL=https://receipt-verification-app.onrender.com
 ZAPP_API_TOKEN=<same internal token expected by the live ZAPP backend>
+ZAPP_SHOP_DOMAIN=<your-store.myshopify.com>
 FRONTEND_ORIGIN=https://dashboard.zappmv.com
 CORS_ORIGINS=https://dashboard.zappmv.com
 ```

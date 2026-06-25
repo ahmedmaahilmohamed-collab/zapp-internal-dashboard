@@ -292,6 +292,52 @@ def deactivate_cost_template(db: Session, template_id: int):
     return _commit_refresh(db, template)
 
 
+def list_listed_product_pricing_records(
+    db: Session,
+    *,
+    shop: str | None = None,
+    product_id: str | None = None,
+    variant_id: str | None = None,
+    limit: int = 200,
+):
+    statement: Select = select(models.ListedProductPricingRecord).order_by(
+        models.ListedProductPricingRecord.updated_at.desc(),
+    )
+    if shop:
+        statement = statement.where(models.ListedProductPricingRecord.shop == shop.strip())
+    if product_id:
+        statement = statement.where(models.ListedProductPricingRecord.product_id == product_id.strip())
+    if variant_id:
+        statement = statement.where(models.ListedProductPricingRecord.variant_id == variant_id.strip())
+    return db.scalars(statement.limit(limit)).all()
+
+
+def create_listed_product_pricing_record(
+    db: Session,
+    *,
+    shop: str,
+    payload: schemas.ListedProductPricingCreate,
+):
+    data = payload.model_dump()
+    record = models.ListedProductPricingRecord(shop=shop.strip(), **data)
+    db.add(record)
+    return _commit_refresh(db, record)
+
+
+def delete_listed_product_pricing_record(db: Session, record_id: int, *, shop: str | None = None):
+    statement = select(models.ListedProductPricingRecord).where(
+        models.ListedProductPricingRecord.id == record_id,
+    )
+    if shop:
+        statement = statement.where(models.ListedProductPricingRecord.shop == shop.strip())
+    record = db.scalar(statement)
+    if record is None:
+        return None
+    db.delete(record)
+    db.commit()
+    return record
+
+
 def calculate_pricing(db: Session, payload: schemas.PricingCalculateRequest):
     source_currency = _find_active_currency(db, payload.source_currency)
     target_currency = _find_active_currency(db, payload.target_currency)

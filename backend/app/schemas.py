@@ -1,6 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
-from typing import Annotated
+from typing import Annotated, Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -296,6 +296,102 @@ class CostTemplateRead(CostTemplateBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    created_at: datetime
+    updated_at: datetime
+
+
+PricingScope = Annotated[str, Field(pattern="^(all_variants|variant)$")]
+
+
+class ListedProductVariantRead(BaseModel):
+    id: str
+    legacyResourceId: str | None = None
+    title: str
+    sku: str | None = None
+    price: str | None = None
+    nativeMediaCount: int = 0
+
+
+class ListedProductRead(BaseModel):
+    id: str
+    legacyResourceId: str | None = None
+    title: str
+    handle: str | None = None
+    imageUrl: str | None = None
+    imageAlt: str | None = None
+    mediaCount: int = 0
+    galleryCount: int = 0
+    variants: list[ListedProductVariantRead] = []
+
+
+class ListedProductCollectionResponse(BaseModel):
+    success: bool = True
+    items: list[ListedProductRead]
+    total: int
+    truncated: bool = False
+    fetchedAt: datetime
+
+
+class ListedProductPricingCreate(BaseModel):
+    product_id: str
+    product_legacy_id: str | None = None
+    product_title: str
+    product_handle: str | None = None
+    product_image_url: str | None = None
+    variant_id: str | None = None
+    variant_legacy_id: str | None = None
+    variant_title: str | None = None
+    variant_sku: str | None = None
+    pricing_scope: PricingScope = "all_variants"
+    source_currency: str
+    target_currency: str
+    item_cost: NonNegativeMoney
+    product_weight: Annotated[Decimal, Field(gt=0)]
+    desired_margin_percent: Annotated[Decimal, Field(ge=0, lt=100)]
+    payment_fee_percent: Annotated[Decimal, Field(ge=0, lt=100)] = Decimal("0")
+    total_landed_cost: NonNegativeMoney
+    payment_fee_amount: NonNegativeMoney
+    expected_profit: NonNegativeMoney
+    recommended_sale_price: NonNegativeMoney
+    final_rounded_price: NonNegativeMoney
+    input_snapshot: dict[str, Any]
+    result_snapshot: dict[str, Any]
+
+    @field_validator("source_currency", "target_currency")
+    @classmethod
+    def uppercase_pricing_currency(cls, value: str) -> str:
+        return value.strip().upper()
+
+    @field_validator(
+        "product_id",
+        "product_legacy_id",
+        "product_title",
+        "product_handle",
+        "product_image_url",
+        "variant_id",
+        "variant_legacy_id",
+        "variant_title",
+        "variant_sku",
+    )
+    @classmethod
+    def clean_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        normalized = value.strip()
+        return normalized or None
+
+    @model_validator(mode="after")
+    def validate_variant_scope(self):
+        if self.pricing_scope == "variant" and not self.variant_id:
+            raise ValueError("Variant pricing requires a variant ID.")
+        return self
+
+
+class ListedProductPricingRead(ListedProductPricingCreate):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    shop: str
     created_at: datetime
     updated_at: datetime
 

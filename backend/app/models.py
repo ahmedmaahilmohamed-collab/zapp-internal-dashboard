@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Numeric, String, Text, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, JSON, Numeric, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .database import Base
@@ -104,6 +104,36 @@ class CostTemplate(TimestampMixin, Base):
     default_margin_percent: Mapped[Decimal] = mapped_column(Numeric(8, 2), nullable=False, default=0)
     currency: Mapped[str] = mapped_column(String(8), nullable=False, default="MVR")
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+
+class ListedProductPricingRecord(TimestampMixin, Base):
+    __tablename__ = "listed_product_pricing_records"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    shop: Mapped[str] = mapped_column(String(255), index=True, nullable=False)
+    product_id: Mapped[str] = mapped_column(String(255), index=True, nullable=False)
+    product_legacy_id: Mapped[str | None] = mapped_column(String(80), index=True, nullable=True)
+    product_title: Mapped[str] = mapped_column(String(255), nullable=False)
+    product_handle: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    product_image_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    variant_id: Mapped[str | None] = mapped_column(String(255), index=True, nullable=True)
+    variant_legacy_id: Mapped[str | None] = mapped_column(String(80), index=True, nullable=True)
+    variant_title: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    variant_sku: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    pricing_scope: Mapped[str] = mapped_column(String(32), nullable=False, default="all_variants")
+    source_currency: Mapped[str] = mapped_column(String(8), nullable=False)
+    target_currency: Mapped[str] = mapped_column(String(8), nullable=False)
+    item_cost: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=0)
+    product_weight: Mapped[Decimal] = mapped_column(Numeric(12, 3), nullable=False, default=0)
+    desired_margin_percent: Mapped[Decimal] = mapped_column(Numeric(8, 2), nullable=False, default=0)
+    payment_fee_percent: Mapped[Decimal] = mapped_column(Numeric(8, 2), nullable=False, default=0)
+    total_landed_cost: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=0)
+    payment_fee_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=0)
+    expected_profit: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=0)
+    recommended_sale_price: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=0)
+    final_rounded_price: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=0)
+    input_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    result_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
 
 
 class UserAccess(TimestampMixin, Base):
